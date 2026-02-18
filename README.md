@@ -1,6 +1,6 @@
 # Oxira
 
-An MCP (Model Context Protocol) server for indie hackers to evaluate business ideas. Provides tools for market research, competitor analysis, community discovery, and pricing extraction.
+An MCP (Model Context Protocol) server for developers to evaluate business ideas. Provides tools for market research, competitor analysis, community discovery, and pricing extraction.
 
 ## Features
 
