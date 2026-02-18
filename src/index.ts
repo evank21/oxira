@@ -7,11 +7,13 @@ import {
   SearchCompetitorsInputSchema,
   FindCommunitiesInputSchema,
   ExtractPricingInputSchema,
+  FullResearchReportInputSchema,
 } from "./types.js";
 import { estimateMarketSize } from "./tools/estimate-market-size.js";
 import { searchCompetitors } from "./tools/search-competitors.js";
 import { findCommunities } from "./tools/find-communities.js";
 import { extractPricing } from "./tools/extract-pricing.js";
+import { fullResearchReport } from "./tools/full-research-report.js";
 
 // Validate required environment variables
 const braveApiKey = process.env.BRAVE_SEARCH_API_KEY;
@@ -98,6 +100,21 @@ server.tool(
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error";
       return errorResult("Pricing extraction failed", msg);
+    }
+  }
+);
+
+server.tool(
+  "full_research_report",
+  "Run a full market research report for a business idea. Combines competitor search, market size estimation, community discovery, and pricing extraction into a single structured report.",
+  FullResearchReportInputSchema.shape,
+  async (args) => {
+    try {
+      const result = await fullResearchReport(args);
+      return toolResult(result);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      return errorResult("Full research report failed", msg);
     }
   }
 );

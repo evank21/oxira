@@ -100,3 +100,34 @@ export interface ExtractPricingOutput {
   markdown_content: string;
   extraction_hints: string;
 }
+
+// full_research_report
+export const FullResearchReportInputSchema = z.object({
+  business_idea: z
+    .string()
+    .describe("A business idea or product description to research"),
+});
+
+export type FullResearchReportInput = z.infer<
+  typeof FullResearchReportInputSchema
+>;
+
+export interface FullResearchReportSection<T> {
+  data: T | null;
+  error?: string;
+}
+
+export interface FullResearchReportSummary {
+  key_takeaways: string[];
+  failed_sections: string[];
+}
+
+export interface FullResearchReportOutput {
+  business_idea: string;
+  generated_at: string;
+  market_size: FullResearchReportSection<EstimateMarketSizeOutput>;
+  competitors: FullResearchReportSection<Competitor[]>;
+  communities: FullResearchReportSection<Community[]>;
+  pricing: FullResearchReportSection<ExtractPricingOutput[]>;
+  summary: FullResearchReportSummary;
+}
