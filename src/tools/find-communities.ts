@@ -1,6 +1,7 @@
 import { hnAlgoliaClient } from "../services/hn-algolia.js";
 import { getBraveSearchClient } from "../services/brave-search.js";
 import { getTavilyClient } from "../services/tavily.js";
+import { classifySearchError } from "../utils/errors.js";
 import type {
   FindCommunitiesInput,
   FindCommunitiesOutput,
@@ -9,12 +10,18 @@ import type {
 
 type WebSearchResult = { title: string; url: string; description: string };
 
+/**
+ * Tries Brave then Tavily. Returns results if either succeeds.
+ * Throws if a provider is configured but all fail, so callers can surface the error.
+ * Returns [] only if no providers are configured.
+ */
 async function webSearch(
   query: string,
   count: number
 ): Promise<WebSearchResult[]> {
   const braveClient = getBraveSearchClient();
   const tavilyClient = getTavilyClient();
+  let lastError: unknown;
 
   if (braveClient) {
     try {
@@ -26,6 +33,7 @@ async function webSearch(
       }));
     } catch (error) {
       console.error(`Brave search failed for "${query}":`, error);
+      lastError = error;
     }
   }
 
@@ -39,9 +47,11 @@ async function webSearch(
       }));
     } catch (error) {
       console.error(`Tavily search failed for "${query}":`, error);
+      lastError = error;
     }
   }
 
+  if (lastError) throw lastError;
   return [];
 }
 
@@ -65,6 +75,7 @@ export async function findCommunities(
 ): Promise<FindCommunitiesOutput> {
   const { target_audience, topics } = input;
   const communities: Community[] = [];
+  const errors: string[] = [];
 
   // Search HackerNews for relevant discussions
   const hnQueries = [target_audience, ...topics.slice(0, 2)];
@@ -87,6 +98,7 @@ export async function findCommunities(
       }
     } catch (error) {
       console.error(`HN search failed for "${query}":`, error);
+      errors.push(classifySearchError(error));
     }
   }
 
@@ -97,60 +109,76 @@ export async function findCommunities(
   ];
 
   for (const query of redditQueries.slice(0, 3)) {
-    const results = await webSearch(query, 5);
-    for (const result of results) {
-      const subredditName = extractSubredditName(result.url);
-      if (subredditName) {
-        communities.push({
-          platform: "Reddit",
-          name: subredditName,
-          url: result.url,
-          description: result.description?.slice(0, 200),
-        });
+    try {
+      const results = await webSearch(query, 5);
+      for (const result of results) {
+        const subredditName = extractSubredditName(result.url);
+        if (subredditName) {
+          communities.push({
+            platform: "Reddit",
+            name: subredditName,
+            url: result.url,
+            description: result.description?.slice(0, 200),
+          });
+        }
       }
+    } catch (error) {
+      errors.push(classifySearchError(error));
     }
   }
 
   // Search for Discord communities
   const discordQuery = `site:discord.gg OR site:discord.com ${target_audience} ${topics.join(" ")}`;
-  const discordResults = await webSearch(discordQuery, 5);
-
-  for (const result of discordResults) {
-    if (
-      result.url.includes("discord.gg") ||
-      result.url.includes("discord.com/invite")
-    ) {
-      communities.push({
-        platform: "Discord",
-        name: result.title.replace(/ - Discord$/, "").trim(),
-        url: result.url,
-        description: result.description?.slice(0, 200),
-      });
+  try {
+    const discordResults = await webSearch(discordQuery, 5);
+    for (const result of discordResults) {
+      if (
+        result.url.includes("discord.gg") ||
+        result.url.includes("discord.com/invite")
+      ) {
+        communities.push({
+          platform: "Discord",
+          name: result.title.replace(/ - Discord$/, "").trim(),
+          url: result.url,
+          description: result.description?.slice(0, 200),
+        });
+      }
     }
+  } catch (error) {
+    errors.push(classifySearchError(error));
   }
 
   // Search for other forums and communities
   const forumQuery = `${target_audience} forum community ${topics.slice(0, 2).join(" ")}`;
-  const forumResults = await webSearch(forumQuery, 10);
-
-  for (const result of forumResults) {
-    const url = result.url.toLowerCase();
-    if (
-      url.includes("forum") ||
-      url.includes("community") ||
-      url.includes("slack") ||
-      url.includes("groups") ||
-      url.includes("circle.so")
-    ) {
-      communities.push({
-        platform: "Forum",
-        name: result.title,
-        url: result.url,
-        description: result.description?.slice(0, 200),
-      });
+  try {
+    const forumResults = await webSearch(forumQuery, 10);
+    for (const result of forumResults) {
+      const url = result.url.toLowerCase();
+      if (
+        url.includes("forum") ||
+        url.includes("community") ||
+        url.includes("slack") ||
+        url.includes("groups") ||
+        url.includes("circle.so")
+      ) {
+        communities.push({
+          platform: "Forum",
+          name: result.title,
+          url: result.url,
+          description: result.description?.slice(0, 200),
+        });
+      }
     }
+  } catch (error) {
+    errors.push(classifySearchError(error));
   }
 
-  // Dedupe and limit results
-  return dedupeByUrl(communities).slice(0, 15);
+  const unique = dedupeByUrl(communities).slice(0, 15);
+
+  // If every search failed and we found nothing, surface the root cause
+  if (unique.length === 0 && errors.length > 0) {
+    throw new Error(`All community searches failed: ${errors[0]}`);
+  }
+
+  return unique;
 }

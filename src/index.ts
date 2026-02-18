@@ -15,6 +15,17 @@ import { findCommunities } from "./tools/find-communities.js";
 import { extractPricing } from "./tools/extract-pricing.js";
 import { fullResearchReport } from "./tools/full-research-report.js";
 
+// Fail fast if running on an unsupported Node.js version
+const nodeMajor = parseInt(process.versions.node.split(".")[0], 10);
+if (nodeMajor < 18) {
+  console.error(
+    `Oxira requires Node.js 18 or later. Currently running ${process.version}. ` +
+    `If using Claude Desktop or another MCP client, set "command" to an absolute ` +
+    `path such as "/opt/homebrew/bin/node" instead of "node".`
+  );
+  process.exit(1);
+}
+
 // Validate required environment variables
 const braveApiKey = process.env.BRAVE_SEARCH_API_KEY;
 if (!braveApiKey) {

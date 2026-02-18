@@ -1,5 +1,6 @@
 import { getBraveSearchClient } from "../services/brave-search.js";
 import { getTavilyClient } from "../services/tavily.js";
+import { classifySearchError } from "../utils/errors.js";
 import type {
   EstimateMarketSizeInput,
   EstimateMarketSizeOutput,
@@ -112,6 +113,7 @@ export async function estimateMarketSize(
 
   const braveClient = getBraveSearchClient();
   const tavilyClient = getTavilyClient();
+  let searchError: string | undefined;
 
   if (braveClient) {
     try {
@@ -123,6 +125,7 @@ export async function estimateMarketSize(
       }));
     } catch (error) {
       console.error("Brave Search failed:", error);
+      searchError = classifySearchError(error);
     }
   }
 
@@ -137,16 +140,21 @@ export async function estimateMarketSize(
       }));
     } catch (error) {
       console.error("Tavily Search failed:", error);
+      searchError = classifySearchError(error);
     }
   }
 
   if (searchResults.length === 0) {
     const hasBrave = !!braveClient;
     const hasTavily = !!tavilyClient;
-    const message =
-      !hasBrave && !hasTavily
-        ? "No search provider configured. Set BRAVE_SEARCH_API_KEY or TAVILY_API_KEY."
-        : "Search returned no results. Brave and Tavily both failed or returned empty.";
+    let message: string;
+    if (!hasBrave && !hasTavily) {
+      message = "No search provider configured. Set BRAVE_SEARCH_API_KEY or TAVILY_API_KEY.";
+    } else if (searchError) {
+      message = `Search failed: ${searchError}`;
+    } else {
+      message = "Search returned no results.";
+    }
     return {
       tam_estimate: { low: "Unknown", high: "Unknown" },
       sources: [],

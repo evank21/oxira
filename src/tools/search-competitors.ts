@@ -1,6 +1,7 @@
 import { getBraveSearchClient } from "../services/brave-search.js";
 import { getTavilyClient } from "../services/tavily.js";
 import { fetchAsMarkdown } from "../services/web-fetcher.js";
+import { classifySearchError } from "../utils/errors.js";
 import type {
   SearchCompetitorsInput,
   SearchCompetitorsOutput,
@@ -101,6 +102,7 @@ export async function searchCompetitors(
 
   const braveClient = getBraveSearchClient();
   const tavilyClient = getTavilyClient();
+  let searchError: string | undefined;
 
   if (braveClient) {
     try {
@@ -112,6 +114,7 @@ export async function searchCompetitors(
       }));
     } catch (error) {
       console.error("Brave Search failed:", error);
+      searchError = classifySearchError(error);
     }
   }
 
@@ -125,6 +128,7 @@ export async function searchCompetitors(
       }));
     } catch (error) {
       console.error("Tavily Search failed:", error);
+      searchError = classifySearchError(error);
     }
   }
 
@@ -136,9 +140,10 @@ export async function searchCompetitors(
         "No search provider configured. Set BRAVE_SEARCH_API_KEY or TAVILY_API_KEY."
       );
     }
-    throw new Error(
-      "Search returned no results. Brave and Tavily both failed or returned empty."
-    );
+    if (searchError) {
+      throw new Error(`Search failed: ${searchError}`);
+    }
+    throw new Error("Search returned no results.");
   }
 
   // Dedupe by domain
