@@ -5,8 +5,11 @@ import type {
   EstimateMarketSizeInput,
   EstimateMarketSizeOutput,
   MarketSizeSource,
+  ScopeEstimate,
   Confidence,
 } from "../types.js";
+
+export type MarketScope = "narrow" | "broad";
 
 // Regex patterns for extracting dollar amounts
 const dollarPatterns = [
@@ -67,6 +70,22 @@ export function extractGrowthRate(text: string): string | undefined {
   return undefined;
 }
 
+const NARROW_INDICATORS =
+  /\b(?:app|software|platform|saas|digital|online|on-demand|mobile\s+app|cloud|subscription)\b/i;
+const BROAD_INDICATORS =
+  /\b(?:industry|services?\s+(?:market|sector)|sector|total\s+market|overall|traditional)\b/i;
+
+export function classifyScope(text: string): MarketScope {
+  const hasNarrow = NARROW_INDICATORS.test(text);
+  const hasBroad = BROAD_INDICATORS.test(text);
+
+  if (hasNarrow && !hasBroad) return "narrow";
+  if (hasBroad && !hasNarrow) return "broad";
+  // Both or neither — default to broad as the safer assumption
+  if (hasNarrow && hasBroad) return "broad";
+  return "broad";
+}
+
 function formatDollarAmount(value: number): string {
   if (value >= 1_000_000_000_000) {
     return `$${(value / 1_000_000_000_000).toFixed(1)} trillion`;
@@ -83,8 +102,14 @@ function formatDollarAmount(value: number): string {
 function calculateConfidence(
   sourceCount: number,
   figureCount: number,
-  figureSpread: number
+  figureSpread: number,
+  hasScopeMismatch: boolean
 ): Confidence {
+  // Scope mismatch caps confidence at medium
+  if (hasScopeMismatch) {
+    if (sourceCount >= 2 && figureCount >= 2) return "medium";
+    return "low";
+  }
   // High confidence: multiple sources agreeing within 50% range
   if (sourceCount >= 3 && figureCount >= 3 && figureSpread < 0.5) {
     return "high";
@@ -96,80 +121,99 @@ function calculateConfidence(
   return "low";
 }
 
+type SearchResult = { title: string; url: string; snippet: string };
+
+async function runSearch(query: string, count: number): Promise<{ results: SearchResult[]; error?: string }> {
+  const braveClient = getBraveSearchClient();
+  const tavilyClient = getTavilyClient();
+
+  if (braveClient) {
+    try {
+      const response = await braveClient.search(query, count);
+      return {
+        results: response.results.map((r) => ({
+          title: r.title,
+          url: r.url,
+          snippet: r.description,
+        })),
+      };
+    } catch (error) {
+      console.error(`Brave Search failed for "${query}":`, error);
+    }
+  }
+
+  if (tavilyClient) {
+    try {
+      const response = await tavilyClient.search(query, count);
+      return {
+        results: response.results.map((r) => ({
+          title: r.title,
+          url: r.url,
+          snippet: r.content,
+        })),
+      };
+    } catch (error) {
+      console.error(`Tavily Search failed for "${query}":`, error);
+      return { results: [], error: classifySearchError(error) };
+    }
+  }
+
+  return { results: [], error: "No search provider configured. Set BRAVE_SEARCH_API_KEY or TAVILY_API_KEY." };
+}
+
+interface ScopedFigure {
+  value: number;
+  scope: MarketScope;
+}
+
 export async function estimateMarketSize(
   input: EstimateMarketSizeInput
 ): Promise<EstimateMarketSizeOutput> {
   const { industry, geography = "global" } = input;
 
-  // Build search query
   const geoTerm = geography === "global" ? "" : ` ${geography}`;
-  const query = `${industry}${geoTerm} market size TAM 2024 2025`;
+  const narrowQuery = `${industry}${geoTerm} market size 2024 2025`;
+  const broadQuery = `${industry}${geoTerm} industry market size 2024`;
 
-  // Try Brave Search first, fall back to Tavily
-  let searchResults: Array<{ title: string; url: string; snippet: string }> =
-    [];
+  // Run narrow and broad searches in parallel
+  const [narrowResult, broadResult] = await Promise.all([
+    runSearch(narrowQuery, 10),
+    runSearch(broadQuery, 5),
+  ]);
 
-  const braveClient = getBraveSearchClient();
-  const tavilyClient = getTavilyClient();
-  let searchError: string | undefined;
-
-  if (braveClient) {
-    try {
-      const response = await braveClient.search(query, 10);
-      searchResults = response.results.map((r) => ({
-        title: r.title,
-        url: r.url,
-        snippet: r.description,
-      }));
-    } catch (error) {
-      console.error("Brave Search failed:", error);
-      searchError = classifySearchError(error);
+  // Deduplicate by URL
+  const seenUrls = new Set<string>();
+  const allResults: SearchResult[] = [];
+  for (const r of [...narrowResult.results, ...broadResult.results]) {
+    const normalized = r.url.toLowerCase().replace(/\/$/, "");
+    if (!seenUrls.has(normalized)) {
+      seenUrls.add(normalized);
+      allResults.push(r);
     }
   }
 
-  // Fall back to Tavily if Brave failed or returned no results
-  if (searchResults.length === 0 && tavilyClient) {
-    try {
-      const response = await tavilyClient.search(query, 10);
-      searchResults = response.results.map((r) => ({
-        title: r.title,
-        url: r.url,
-        snippet: r.content,
-      }));
-    } catch (error) {
-      console.error("Tavily Search failed:", error);
-      searchError = classifySearchError(error);
-    }
-  }
-
-  if (searchResults.length === 0) {
-    const hasBrave = !!braveClient;
-    const hasTavily = !!tavilyClient;
-    let message: string;
-    if (!hasBrave && !hasTavily) {
-      message = "No search provider configured. Set BRAVE_SEARCH_API_KEY or TAVILY_API_KEY.";
-    } else if (searchError) {
-      message = `Search failed: ${searchError}`;
-    } else {
-      message = "Search returned no results.";
-    }
+  if (allResults.length === 0) {
+    const error = narrowResult.error || broadResult.error;
     return {
       tam_estimate: { low: "Unknown", high: "Unknown" },
       sources: [],
       confidence: "low",
-      message,
+      message: error || "Search returned no results.",
     };
   }
 
-  // Extract dollar figures from all snippets
-  const allFigures: number[] = [];
+  // Extract and classify figures by scope
+  const scopedFigures: ScopedFigure[] = [];
   const sources: MarketSizeSource[] = [];
   let growthRate: string | undefined;
 
-  for (const result of searchResults) {
+  for (const result of allResults) {
     const figures = extractDollarFigures(result.snippet);
     if (figures.length > 0) {
-      allFigures.push(...figures);
+      const scope = classifyScope(`${result.title} ${result.snippet}`);
+      for (const value of figures) {
+        scopedFigures.push({ value, scope });
+      }
       sources.push({
         title: result.title,
         url: result.url,
@@ -177,14 +221,12 @@ export async function estimateMarketSize(
       });
     }
 
-    // Extract growth rate if not already found
     if (!growthRate) {
       growthRate = extractGrowthRate(result.snippet);
     }
   }
 
-  // Calculate low and high estimates
-  if (allFigures.length === 0) {
+  if (scopedFigures.length === 0) {
     return {
       tam_estimate: { low: "Unknown", high: "Unknown" },
       sources: sources.slice(0, 5),
@@ -192,21 +234,80 @@ export async function estimateMarketSize(
     };
   }
 
-  allFigures.sort((a, b) => a - b);
-  const low = allFigures[0];
-  const high = allFigures[allFigures.length - 1];
+  // Separate by scope
+  const narrowFigures = scopedFigures
+    .filter((f) => f.scope === "narrow")
+    .map((f) => f.value)
+    .sort((a, b) => a - b);
+  const broadFigures = scopedFigures
+    .filter((f) => f.scope === "broad")
+    .map((f) => f.value)
+    .sort((a, b) => a - b);
 
-  // Calculate spread for confidence assessment
+  const allValues = scopedFigures.map((f) => f.value).sort((a, b) => a - b);
+
+  // Prefer narrow figures for top-level estimate; fall back to broad, then all
+  const primaryFigures =
+    narrowFigures.length >= 2
+      ? narrowFigures
+      : broadFigures.length >= 2
+        ? broadFigures
+        : allValues;
+
+  const low = primaryFigures[0];
+  const high = primaryFigures[primaryFigures.length - 1];
+
+  // Build scope breakdowns
+  let narrow_estimate: ScopeEstimate | undefined;
+  let broad_estimate: ScopeEstimate | undefined;
+
+  if (narrowFigures.length >= 1) {
+    narrow_estimate = {
+      low: formatDollarAmount(narrowFigures[0]),
+      high: formatDollarAmount(narrowFigures[narrowFigures.length - 1]),
+      description: "Digital/platform segment (apps, SaaS, online)",
+    };
+  }
+  if (broadFigures.length >= 1) {
+    broad_estimate = {
+      low: formatDollarAmount(broadFigures[0]),
+      high: formatDollarAmount(broadFigures[broadFigures.length - 1]),
+      description: "Total industry including traditional services",
+    };
+  }
+
+  // Detect scope mismatch
+  const hasScopeMismatch =
+    narrowFigures.length > 0 &&
+    broadFigures.length > 0 &&
+    broadFigures[broadFigures.length - 1] > narrowFigures[narrowFigures.length - 1] * 2;
+
   const spread = high > 0 ? (high - low) / high : 0;
-  const confidence = calculateConfidence(sources.length, allFigures.length, spread);
+  const confidence = calculateConfidence(
+    sources.length,
+    primaryFigures.length,
+    spread,
+    hasScopeMismatch
+  );
+
+  let note: string | undefined;
+  if (hasScopeMismatch) {
+    note =
+      "Figures span different market scopes (digital/platform vs total industry). " +
+      "The primary estimate uses the narrower digital/platform segment. " +
+      "See narrow_estimate and broad_estimate for the breakdown.";
+  }
 
   return {
     tam_estimate: {
       low: formatDollarAmount(low),
       high: formatDollarAmount(high),
+      ...(narrow_estimate && { narrow_estimate }),
+      ...(broad_estimate && { broad_estimate }),
     },
     growth_rate: growthRate,
     sources: sources.slice(0, 5),
     confidence,
+    ...(note && { note }),
   };
 }

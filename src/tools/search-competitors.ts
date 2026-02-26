@@ -68,6 +68,251 @@ export function extractDomain(url: string): string {
   }
 }
 
+interface SearchResult {
+  title: string;
+  url: string;
+  description: string;
+}
+
+const CONTENT_DOMAINS = new Set([
+  "reddit.com",
+  "medium.com",
+  "news.ycombinator.com",
+  "quora.com",
+  "youtube.com",
+  "wikipedia.org",
+  "forbes.com",
+  "techcrunch.com",
+  "linkedin.com",
+  "twitter.com",
+  "x.com",
+  "facebook.com",
+  "tiktok.com",
+  "instagram.com",
+  "pinterest.com",
+  "g2.com",
+  "capterra.com",
+  "trustpilot.com",
+  "crunchbase.com",
+  "glassdoor.com",
+  "yelp.com",
+  "tracxn.com",
+  "clutch.co",
+  "goodfirms.co",
+  "sourceforge.net",
+]);
+
+const CONTENT_PATH_PATTERNS = [
+  /\/blog\b/i,
+  /\/article/i,
+  /\/top-/i,
+  /\/best-/i,
+  /\/category\//i,
+  /\/tag\//i,
+  /\/news\//i,
+  /\/reviews?\//i,
+  /\/comparison/i,
+  /\/vs\//i,
+  /\/resources\//i,
+  /\/guide\//i,
+  /\/faq\//i,
+];
+
+const LISTICLE_TITLE_PATTERNS = [
+  /\btop\s+\d+\b/i,
+  /\bbest\s+\d+\b/i,
+  /\bbest\b.*\b(software|tools|apps|platforms|solutions)\b/i,
+  /\d+\s+best\b/i,
+  /\bhow\s+to\s+build\b/i,
+  /\bdevelopment\s+company\b/i,
+  /\bdevelopment\s+services?\b/i,
+  /\bvs\.?\s+\w/i,
+  /\balternatives?\s+to\b/i,
+  /\breviews?\s+of\b/i,
+  /\bcomparison\b/i,
+];
+
+const AGENCY_DOMAIN_PATTERNS = [
+  /solutions?$/i,
+  /agency$/i,
+  /consulting$/i,
+  /development$/i,
+  /developers?$/i,
+  /services?$/i,
+  /technologies$/i,
+  /techno$/i,
+  /soft$/i,
+  /infotech$/i,
+];
+
+const PRODUCT_PATH_PATTERNS = [
+  /\/pricing/i,
+  /\/features/i,
+  /\/product/i,
+  /\/plans/i,
+  /\/demo/i,
+  /\/signup/i,
+  /\/register/i,
+  /\/get-?started/i,
+];
+
+const FIRST_PERSON_PATTERNS = [
+  /\bwe offer\b/i,
+  /\bour (platform|product|solution|app|software|tool)\b/i,
+  /\bsign up\b/i,
+  /\bstart (your |a )?free trial\b/i,
+  /\bget started\b/i,
+  /\btry (it |us )?free\b/i,
+];
+
+export function scoreResult(result: SearchResult): number {
+  let score = 50; // neutral baseline
+  const domain = extractDomain(result.url);
+  const domainName = domain.split(".")[0];
+
+  // --- Negative signals ---
+
+  // Known content/social platforms
+  for (const contentDomain of CONTENT_DOMAINS) {
+    if (domain === contentDomain || domain.endsWith(`.${contentDomain}`)) {
+      return 0; // immediate disqualify
+    }
+  }
+
+  // Content-oriented URL paths
+  const path = (() => {
+    try {
+      return new URL(result.url).pathname;
+    } catch {
+      return "";
+    }
+  })();
+
+  for (const pattern of CONTENT_PATH_PATTERNS) {
+    if (pattern.test(path)) {
+      score -= 20;
+      break; // only penalize once for path
+    }
+  }
+
+  // Listicle/comparison titles
+  for (const pattern of LISTICLE_TITLE_PATTERNS) {
+    if (pattern.test(result.title)) {
+      score -= 25;
+      break;
+    }
+  }
+
+  // Agency/dev-shop domains
+  for (const pattern of AGENCY_DOMAIN_PATTERNS) {
+    if (pattern.test(domainName)) {
+      score -= 25;
+      break;
+    }
+  }
+
+  // Forum/community domains
+  if (/forum|community|discuss/i.test(domainName)) {
+    score -= 30;
+  }
+
+  // --- Positive signals ---
+
+  // Short branded domain (likely a product)
+  if (domainName.length <= 12) {
+    score += 5;
+  }
+
+  // Product-related URL paths
+  for (const pattern of PRODUCT_PATH_PATTERNS) {
+    if (pattern.test(path)) {
+      score += 10;
+      break;
+    }
+  }
+
+  // First-person product language in description
+  for (const pattern of FIRST_PERSON_PATTERNS) {
+    if (pattern.test(result.description)) {
+      score += 15;
+      break;
+    }
+  }
+
+  // Landing on root or shallow path suggests a product homepage
+  if (path === "/" || path === "" || path.split("/").filter(Boolean).length <= 1) {
+    score += 5;
+  }
+
+  return Math.max(0, score);
+}
+
+export function isProductPage(markdown: string): boolean {
+  const sample = markdown.slice(0, 3000).toLowerCase();
+
+  let signals = 0;
+
+  // Signup/login CTAs
+  if (/sign\s*up|create\s+(an?\s+)?account|get\s+started|start\s+(your\s+)?free\s+trial|request\s+a?\s*demo/i.test(sample)) {
+    signals++;
+  }
+
+  // Pricing mentions
+  if (/pricing|plans?\s+(&|and)\s+pricing|\$\d|free\s+plan|per\s+month|\/mo\b/i.test(sample)) {
+    signals++;
+  }
+
+  // First-person product description
+  if (/\bour (platform|product|solution|software|app|tool)\b|\bwe (help|offer|provide|enable|make)\b/i.test(sample)) {
+    signals++;
+  }
+
+  // At least 2 out of 3 signals → likely a product page
+  return signals >= 2;
+}
+
+const NOISE_PATH_PREFIXES = [
+  "/blog/",
+  "/blog",
+  "/resources/",
+  "/guide/",
+  "/faq/",
+  "/article/",
+  "/articles/",
+  "/top-",
+  "/best-",
+  "/news/",
+  "/comparison",
+  "/vs/",
+  "/reviews/",
+  "/review/",
+];
+
+export function looksLikeProductDomain(hostname: string): boolean {
+  const clean = hostname.replace(/^www\./, "");
+  if (clean.length >= 20) return false;
+  const domainName = clean.split(".")[0];
+  for (const pattern of AGENCY_DOMAIN_PATTERNS) {
+    if (pattern.test(domainName)) return false;
+  }
+  if (/forum|community|discuss|magazine|mag\b/i.test(domainName)) return false;
+  return true;
+}
+
+export function normalizeProductUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const pathLower = parsed.pathname.toLowerCase();
+    const hasNoisePath = NOISE_PATH_PREFIXES.some((p) => pathLower.startsWith(p) || pathLower.includes(p));
+    if (hasNoisePath && looksLikeProductDomain(parsed.hostname)) {
+      return `${parsed.protocol}//${parsed.host}`;
+    }
+    return url;
+  } catch {
+    return url;
+  }
+}
+
 function extractCompanyName(url: string, title: string): string {
   // Try to get name from domain
   const domain = extractDomain(url);
@@ -87,59 +332,88 @@ function extractCompanyName(url: string, title: string): string {
   return title;
 }
 
+const SCORE_THRESHOLD = 30;
+
+export function buildSearchQueries(
+  industry: string,
+  productType?: string
+): string[] {
+  const base = productType ? `${industry} ${productType}` : industry;
+  return [
+    `${base} software platform`,
+    `${base} competitors alternatives`,
+    `"${base}" pricing signup`,
+  ];
+}
+
+async function runSearch(
+  queries: string[],
+  countPerQuery: number
+): Promise<{ results: SearchResult[]; error?: string }> {
+  const braveClient = getBraveSearchClient();
+  const tavilyClient = getTavilyClient();
+  let searchError: string | undefined;
+  const allResults: SearchResult[] = [];
+
+  for (const query of queries) {
+    if (braveClient) {
+      try {
+        const response = await braveClient.search(query, countPerQuery);
+        allResults.push(
+          ...response.results.map((r) => ({
+            title: r.title,
+            url: r.url,
+            description: r.description,
+          }))
+        );
+        continue; // got results for this query, move to next
+      } catch (error) {
+        console.error("Brave Search failed:", error);
+        searchError = classifySearchError(error);
+      }
+    }
+
+    // Fallback to Tavily for this query
+    if (tavilyClient) {
+      try {
+        const response = await tavilyClient.search(query, countPerQuery);
+        allResults.push(
+          ...response.results.map((r) => ({
+            title: r.title,
+            url: r.url,
+            description: r.content,
+          }))
+        );
+      } catch (error) {
+        console.error("Tavily Search failed:", error);
+        searchError = classifySearchError(error);
+      }
+    }
+  }
+
+  if (allResults.length === 0 && !braveClient && !tavilyClient) {
+    throw new Error(
+      "No search provider configured. Set BRAVE_SEARCH_API_KEY or TAVILY_API_KEY."
+    );
+  }
+
+  return { results: allResults, error: searchError };
+}
+
 export async function searchCompetitors(
   input: SearchCompetitorsInput
 ): Promise<SearchCompetitorsOutput> {
   const { industry, product_type, max_results = 5 } = input;
 
-  // Build search query
-  const productTerm = product_type ? ` ${product_type}` : "";
-  const query = `${industry}${productTerm} competitors alternatives`;
+  const queries = buildSearchQueries(industry, product_type);
+  const countPerQuery = max_results + 5;
 
-  // Try Brave Search first, fall back to Tavily
-  let searchResults: Array<{ title: string; url: string; description: string }> =
-    [];
-
-  const braveClient = getBraveSearchClient();
-  const tavilyClient = getTavilyClient();
-  let searchError: string | undefined;
-
-  if (braveClient) {
-    try {
-      const response = await braveClient.search(query, max_results + 5);
-      searchResults = response.results.map((r) => ({
-        title: r.title,
-        url: r.url,
-        description: r.description,
-      }));
-    } catch (error) {
-      console.error("Brave Search failed:", error);
-      searchError = classifySearchError(error);
-    }
-  }
-
-  if (searchResults.length === 0 && tavilyClient) {
-    try {
-      const response = await tavilyClient.search(query, max_results + 5);
-      searchResults = response.results.map((r) => ({
-        title: r.title,
-        url: r.url,
-        description: r.content,
-      }));
-    } catch (error) {
-      console.error("Tavily Search failed:", error);
-      searchError = classifySearchError(error);
-    }
-  }
+  const { results: searchResults, error: searchError } = await runSearch(
+    queries,
+    countPerQuery
+  );
 
   if (searchResults.length === 0) {
-    const hasBrave = !!braveClient;
-    const hasTavily = !!tavilyClient;
-    if (!hasBrave && !hasTavily) {
-      throw new Error(
-        "No search provider configured. Set BRAVE_SEARCH_API_KEY or TAVILY_API_KEY."
-      );
-    }
     if (searchError) {
       throw new Error(`Search failed: ${searchError}`);
     }
@@ -155,29 +429,82 @@ export async function searchCompetitors(
     return true;
   });
 
-  // Fetch and parse landing pages (limit parallel requests)
+  // Score and filter results, then sort by score descending
+  const scoredResults = uniqueResults
+    .map((r) => ({ result: r, score: scoreResult(r) }))
+    .filter((s) => s.score >= SCORE_THRESHOLD)
+    .sort((a, b) => b.score - a.score);
+
+  // Normalize URLs: redirect product domains from blog/resources pages to root
+  const normalizedResults = scoredResults.map((s) => ({
+    ...s,
+    result: { ...s.result, url: normalizeProductUrl(s.result.url) },
+  }));
+
+  // Re-dedupe after normalization (multiple blog URLs may collapse to same root)
+  const seenFetchDomains = new Set<string>();
+  const dedupedResults = normalizedResults.filter((s) => {
+    const domain = extractDomain(s.result.url);
+    if (seenFetchDomains.has(domain)) return false;
+    seenFetchDomains.add(domain);
+    return true;
+  });
+
+  // Fetch and validate top candidates (fetch more than needed to allow for post-fetch filtering)
+  const fetchLimit = Math.min(dedupedResults.length, max_results + 3);
   const competitors: Competitor[] = [];
 
-  for (const result of uniqueResults.slice(0, max_results)) {
+  for (const { result } of dedupedResults.slice(0, fetchLimit)) {
+    if (competitors.length >= max_results) break;
+
     try {
       const fetchResult = await fetchAsMarkdown(result.url);
 
-      const competitor: Competitor = {
+      // Post-fetch validation: demote non-product pages
+      if (!isProductPage(fetchResult.markdown)) {
+        continue;
+      }
+
+      competitors.push({
         name: extractCompanyName(result.url, result.title),
         url: result.url,
         description: result.description,
         tagline: extractTagline(fetchResult.markdown),
         features: extractFeatures(fetchResult.markdown),
-      };
-
-      competitors.push(competitor);
+      });
     } catch {
-      // If fetch fails, still include basic info from search results
+      // If fetch fails, still include basic info (search score was good)
       competitors.push({
         name: extractCompanyName(result.url, result.title),
         url: result.url,
         description: result.description,
       });
+    }
+  }
+
+  // If post-fetch filtering was too aggressive, backfill from remaining scored results
+  if (competitors.length < max_results) {
+    for (const { result } of dedupedResults.slice(fetchLimit)) {
+      if (competitors.length >= max_results) break;
+      const domain = extractDomain(result.url);
+      if (competitors.some((c) => extractDomain(c.url) === domain)) continue;
+
+      try {
+        const fetchResult = await fetchAsMarkdown(result.url);
+        competitors.push({
+          name: extractCompanyName(result.url, result.title),
+          url: result.url,
+          description: result.description,
+          tagline: extractTagline(fetchResult.markdown),
+          features: extractFeatures(fetchResult.markdown),
+        });
+      } catch {
+        competitors.push({
+          name: extractCompanyName(result.url, result.title),
+          url: result.url,
+          description: result.description,
+        });
+      }
     }
   }
 

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   generateExtractionHints,
   truncateMarkdown,
+  extractStructuredPricing,
 } from "./extract-pricing.js";
 
 describe("generateExtractionHints", () => {
@@ -62,14 +63,122 @@ describe("generateExtractionHints", () => {
     );
   });
 
-  it("always includes base hints", () => {
-    const hints = generateExtractionHints("anything");
-    expect(hints).toContain("Pricing information extracted as markdown");
-    expect(hints).toContain("Parse the markdown content");
+  it("uses structured summary when structured pricing is provided", () => {
+    const structured = {
+      tiers: [
+        { name: "Free", price: "Free" },
+        { name: "Pro", price: "$29/mo" },
+      ],
+      has_free_tier: true,
+      has_enterprise: false,
+      pricing_model: "flat-rate" as const,
+    };
+    const hints = generateExtractionHints("some content", "Acme", structured);
+    expect(hints).toContain("Extracted 2 pricing tiers: Free (Free), Pro ($29/mo)");
+    expect(hints).toContain("Pricing model: flat-rate");
+    expect(hints).toContain("Source: Acme");
+    // Should not include fallback hints
+    expect(hints).not.toContain("Parse the markdown content");
+  });
+
+  it("falls back to regex hints when no structured tiers", () => {
+    const hints = generateExtractionHints("$29/mo plan with free tier");
+    expect(hints).toContain("Has a free tier or free trial");
+    expect(hints).toContain("Contains monthly pricing");
   });
 
   it("omits source hint when no competitor name given", () => {
     expect(generateExtractionHints("anything")).not.toContain("Source:");
+  });
+});
+
+describe("extractStructuredPricing", () => {
+  it("extracts basic tiers from headings", () => {
+    const markdown =
+      "## Free\n$0/mo\n- 1 project\n\n## Pro\n$29/mo\n- Unlimited projects\n- Priority support";
+    const result = extractStructuredPricing(markdown);
+
+    expect(result.tiers).toHaveLength(2);
+    expect(result.tiers[0].name).toBe("Free");
+    expect(result.tiers[0].price).toBe("$0/mo");
+    expect(result.tiers[0].billing_period).toBe("monthly");
+    expect(result.tiers[1].name).toBe("Pro");
+    expect(result.tiers[1].price).toBe("$29/mo");
+    expect(result.tiers[1].features).toContain("Unlimited projects");
+    expect(result.has_free_tier).toBe(true);
+    expect(result.has_enterprise).toBe(false);
+    expect(result.currency).toBe("USD");
+  });
+
+  it("detects enterprise/custom pricing", () => {
+    const markdown =
+      "## Enterprise\nContact sales for pricing\n- Custom integrations\n- Dedicated support";
+    const result = extractStructuredPricing(markdown);
+
+    expect(result.tiers).toHaveLength(1);
+    expect(result.tiers[0].name).toBe("Enterprise");
+    expect(result.tiers[0].price).toBe("Custom");
+    expect(result.tiers[0].billing_period).toBe("custom");
+    expect(result.has_enterprise).toBe(true);
+    expect(result.tiers[0].features).toContain("Custom integrations");
+  });
+
+  it("detects per-user pricing model", () => {
+    const markdown = "## Team\n$10 per user per month\n- Collaboration features";
+    const result = extractStructuredPricing(markdown);
+
+    expect(result.pricing_model).toBe("per-user");
+  });
+
+  it("falls back to Default tier when no headings found", () => {
+    const markdown = "Starting at $19.99/month for unlimited washes";
+    const result = extractStructuredPricing(markdown);
+
+    expect(result.tiers).toHaveLength(1);
+    expect(result.tiers[0].name).toBe("Default");
+    expect(result.tiers[0].price).toBe("$19.99/month");
+    expect(result.tiers[0].billing_period).toBe("monthly");
+  });
+
+  it("returns empty tiers when no pricing found", () => {
+    const markdown = "Welcome to our product page. Sign up today!";
+    const result = extractStructuredPricing(markdown);
+
+    expect(result.tiers).toHaveLength(0);
+    expect(result.has_free_tier).toBe(false);
+    expect(result.has_enterprise).toBe(false);
+  });
+
+  it("extracts annual pricing", () => {
+    const markdown = "## Pro\n$299/year\n- Everything included";
+    const result = extractStructuredPricing(markdown);
+
+    expect(result.tiers[0].price).toBe("$299/year");
+    expect(result.tiers[0].billing_period).toBe("annual");
+  });
+
+  it("detects usage-based pricing model", () => {
+    const markdown = "## Pay As You Go\n$0.01 per request\nUsage-based billing";
+    const result = extractStructuredPricing(markdown);
+
+    expect(result.pricing_model).toBe("usage-based");
+  });
+
+  it("limits features to 5 per tier", () => {
+    const features = Array.from({ length: 8 }, (_, i) => `- Feature ${i + 1}`).join("\n");
+    const markdown = `## Pro\n$49/mo\n${features}`;
+    const result = extractStructuredPricing(markdown);
+
+    expect(result.tiers[0].features).toHaveLength(5);
+  });
+
+  it("handles bold tier names", () => {
+    const markdown = "**Basic**\n$9/mo\n- 5 users\n\n**Premium**\n$49/mo\n- Unlimited users";
+    const result = extractStructuredPricing(markdown);
+
+    expect(result.tiers).toHaveLength(2);
+    expect(result.tiers[0].name).toBe("Basic");
+    expect(result.tiers[1].name).toBe("Premium");
   });
 });
 

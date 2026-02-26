@@ -19,16 +19,53 @@ const STOP_WORDS = new Set([
   "we", "my", "our", "your", "this", "from", "into", "was",
 ]);
 
-/** Derives a list of topics from a free-form business idea string. */
+/** Derives a list of topics from a free-form business idea string.
+ *  Preserves multi-word compound phrases instead of splitting into individual words.
+ */
 export function deriveTopics(businessIdea: string): string[] {
-  const words = businessIdea
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, "")
+  const cleaned = businessIdea.toLowerCase().replace(/[^a-z0-9\s]/g, "").trim();
+  const words = cleaned
     .split(/\s+/)
     .filter((w) => w.length > 3 && !STOP_WORDS.has(w));
 
-  const topics = [...new Set(words)].slice(0, 5);
-  return topics.length > 0 ? topics : [businessIdea];
+  if (words.length === 0) return [businessIdea];
+
+  const topics: string[] = [];
+  const seen = new Set<string>();
+
+  // Full input as primary topic
+  if (cleaned.length > 0) {
+    topics.push(cleaned);
+    seen.add(cleaned);
+  }
+
+  // Bigrams from consecutive meaningful words (preserves compound phrases like "car wash")
+  const allWords = cleaned.split(/\s+/);
+  for (let i = 0; i < allWords.length - 1; i++) {
+    const bigram = `${allWords[i]} ${allWords[i + 1]}`;
+    if (
+      !seen.has(bigram) &&
+      !STOP_WORDS.has(allWords[i]) &&
+      !STOP_WORDS.has(allWords[i + 1])
+    ) {
+      topics.push(bigram);
+      seen.add(bigram);
+    }
+  }
+
+  // Individual meaningful words as supplementary, but skip words already
+  // covered by a bigram (e.g. "wash" is covered by "car wash")
+  const bigramWords = new Set(
+    topics.slice(1).flatMap((t) => t.split(/\s+/))
+  );
+  for (const w of words) {
+    if (!seen.has(w) && !bigramWords.has(w)) {
+      topics.push(w);
+      seen.add(w);
+    }
+  }
+
+  return topics.slice(0, 5);
 }
 
 function settledToSection<T>(
@@ -48,10 +85,19 @@ export function generateSummary(
   competitors: FullResearchReportSection<Competitor[]>,
   marketSize: FullResearchReportSection<EstimateMarketSizeOutput>,
   communities: FullResearchReportSection<Community[]>,
-  pricing: FullResearchReportSection<ExtractPricingOutput[]>
+  pricing: FullResearchReportSection<ExtractPricingOutput[]>,
+  options?: { geography?: string; target_segment?: string }
 ): FullResearchReportSummary {
   const key_takeaways: string[] = [];
   const failed_sections: string[] = [];
+
+  const geoLabel =
+    options?.geography && options.geography !== "global"
+      ? ` (${options.geography.toUpperCase()})`
+      : "";
+  const segmentLabel = options?.target_segment
+    ? ` for ${options.target_segment}`
+    : "";
 
   // Market size takeaway
   if (marketSize.data) {
@@ -59,7 +105,7 @@ export function generateSummary(
     if (tam_estimate.low !== "Unknown") {
       const growthSuffix = growth_rate ? `, growing at ${growth_rate}` : "";
       key_takeaways.push(
-        `Market size is estimated between ${tam_estimate.low} and ${tam_estimate.high} (${confidence} confidence)${growthSuffix}.`
+        `Market size${segmentLabel}${geoLabel} is estimated between ${tam_estimate.low} and ${tam_estimate.high} (${confidence} confidence)${growthSuffix}.`
       );
     } else {
       key_takeaways.push(
@@ -129,16 +175,26 @@ export function generateSummary(
 export async function fullResearchReport(
   input: FullResearchReportInput
 ): Promise<FullResearchReportOutput> {
-  const { business_idea } = input;
+  const { business_idea, target_segment, geography = "global", product_type } = input;
 
   const topics = deriveTopics(business_idea);
+  if (product_type && !topics.includes(product_type.toLowerCase())) {
+    topics.push(product_type.toLowerCase());
+  }
+
+  // If target_segment is provided, augment the industry query
+  const industry = target_segment
+    ? `${business_idea} ${target_segment}`
+    : business_idea;
+
+  const audience = target_segment || business_idea;
 
   // Run competitors, market size, and communities in parallel
   const [competitorsSettled, marketSizeSettled, communitiesSettled] =
     await Promise.allSettled([
-      searchCompetitors({ industry: business_idea, max_results: 5 }),
-      estimateMarketSize({ industry: business_idea, geography: "global" }),
-      findCommunities({ target_audience: business_idea, topics }),
+      searchCompetitors({ industry, product_type, max_results: 5 }),
+      estimateMarketSize({ industry: business_idea, geography }),
+      findCommunities({ target_audience: audience, topics }),
     ]);
 
   const competitorsSection = settledToSection(competitorsSettled);
@@ -184,7 +240,8 @@ export async function fullResearchReport(
     competitorsSection,
     marketSizeSection,
     communitiesSection,
-    pricingSection
+    pricingSection,
+    { geography, target_segment }
   );
 
   return {
