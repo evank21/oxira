@@ -37,6 +37,10 @@
     "typescript-eslint": "^8.56.0",
     "vitest": "^2.0.0"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/evank21/oxira"
+  },
   "engines": {
     "node": ">=18"
   }
