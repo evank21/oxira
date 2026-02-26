@@ -1,6 +1,6 @@
 {
   "name": "oxira",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Oxira MCP Server - Business idea evaluation for indie hackers",
   "type": "module",
   "main": "dist/index.js",
