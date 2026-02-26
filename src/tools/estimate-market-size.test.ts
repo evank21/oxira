@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   extractDollarFigures,
   extractGrowthRate,
+  classifyScope,
 } from "./estimate-market-size.js";
 
 describe("extractDollarFigures", () => {
@@ -57,6 +58,56 @@ describe("extractDollarFigures", () => {
     const figures2 = extractDollarFigures(text2);
     expect(figures1).toContain(1_000_000_000);
     expect(figures2).toContain(2_000_000_000);
+  });
+});
+
+describe("classifyScope", () => {
+  it("classifies app/platform mentions as narrow", () => {
+    expect(
+      classifyScope("The mobile car wash app market is valued at $3.2B")
+    ).toBe("narrow");
+  });
+
+  it("classifies SaaS/software as narrow", () => {
+    expect(
+      classifyScope("Project management software market size")
+    ).toBe("narrow");
+  });
+
+  it("classifies on-demand platform as narrow", () => {
+    expect(
+      classifyScope("Market size for on-demand car wash platforms")
+    ).toBe("narrow");
+  });
+
+  it("classifies industry/services as broad", () => {
+    expect(
+      classifyScope("The car wash services industry reached $16.6 billion")
+    ).toBe("broad");
+  });
+
+  it("classifies sector as broad", () => {
+    expect(
+      classifyScope("The global car washing sector is expected to grow")
+    ).toBe("broad");
+  });
+
+  it("classifies total market as broad", () => {
+    expect(
+      classifyScope("The total market for car wash reached $20B")
+    ).toBe("broad");
+  });
+
+  it("defaults to broad when both indicators present", () => {
+    expect(
+      classifyScope("The car wash app services industry is growing")
+    ).toBe("broad");
+  });
+
+  it("defaults to broad when no indicators found", () => {
+    expect(
+      classifyScope("Car wash market valued at $5 billion")
+    ).toBe("broad");
   });
 });
 
