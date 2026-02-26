@@ -44,7 +44,6 @@ function settledToSection<T>(
   return { data: null, error };
 }
 
-/** Exported for testing. Generates a summary from combined research results. */
 export function generateSummary(
   competitors: FullResearchReportSection<Competitor[]>,
   marketSize: FullResearchReportSection<EstimateMarketSizeOutput>,

@@ -27,7 +27,6 @@ const multipliers: Record<string, number> = {
   m: 1_000_000,
 };
 
-/** Exported for testing. Extracts dollar amounts from text using regex patterns. */
 export function extractDollarFigures(text: string): number[] {
   const figures: number[] = [];
 
@@ -49,7 +48,6 @@ export function extractDollarFigures(text: string): number[] {
   return figures;
 }
 
-/** Exported for testing. Extracts CAGR/growth rate percentages from text. */
 export function extractGrowthRate(text: string): string | undefined {
   // Look for CAGR or growth rate patterns
   const patterns = [

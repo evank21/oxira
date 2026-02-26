@@ -55,12 +55,12 @@ async function webSearch(
   return [];
 }
 
-function extractSubredditName(url: string): string | undefined {
+export function extractSubredditName(url: string): string | undefined {
   const match = url.match(/reddit\.com\/r\/([^/]+)/i);
   return match ? `r/${match[1]}` : undefined;
 }
 
-function dedupeByUrl(communities: Community[]): Community[] {
+export function dedupeByUrl(communities: Community[]): Community[] {
   const seen = new Set<string>();
   return communities.filter((c) => {
     const normalized = c.url.toLowerCase().replace(/\/$/, "");

@@ -8,7 +8,7 @@ import type {
   Competitor,
 } from "../types.js";
 
-function extractTagline(markdown: string): string | undefined {
+export function extractTagline(markdown: string): string | undefined {
   // Look for common tagline patterns in the first 500 chars
   const header = markdown.slice(0, 500);
 
@@ -33,7 +33,7 @@ function extractTagline(markdown: string): string | undefined {
   return undefined;
 }
 
-function extractFeatures(markdown: string): string[] {
+export function extractFeatures(markdown: string): string[] {
   const features: string[] = [];
 
   // Look for bullet points or numbered lists
@@ -59,7 +59,7 @@ function extractFeatures(markdown: string): string[] {
   return features;
 }
 
-function extractDomain(url: string): string {
+export function extractDomain(url: string): string {
   try {
     const urlObj = new URL(url);
     return urlObj.hostname.replace(/^www\./, "");

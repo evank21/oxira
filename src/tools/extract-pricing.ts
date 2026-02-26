@@ -1,7 +1,7 @@
 import { fetchPricingPage } from "../services/web-fetcher.js";
 import type { ExtractPricingInput, ExtractPricingOutput } from "../types.js";
 
-function generateExtractionHints(
+export function generateExtractionHints(
   markdown: string,
   competitorName?: string
 ): string {
@@ -50,7 +50,7 @@ function generateExtractionHints(
   return hints.join(". ");
 }
 
-function truncateMarkdown(markdown: string, maxLength: number = 15000): string {
+export function truncateMarkdown(markdown: string, maxLength: number = 15000): string {
   if (markdown.length <= maxLength) {
     return markdown;
   }
