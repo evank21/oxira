@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractSubredditName, dedupeByUrl } from "./find-communities.js";
+import { extractSubredditName, dedupeByUrl, isRelevantResult } from "./find-communities.js";
 import type { Community } from "../types.js";
 
 describe("extractSubredditName", () => {
@@ -22,6 +22,32 @@ describe("extractSubredditName", () => {
   it("returns undefined for non-reddit URLs", () => {
     expect(extractSubredditName("https://news.ycombinator.com")).toBeUndefined();
     expect(extractSubredditName("https://example.com/r/fake")).toBeUndefined();
+  });
+});
+
+describe("isRelevantResult", () => {
+  it("matches multi-word compound phrases", () => {
+    expect(isRelevantResult("Best car wash services in LA", ["car wash"])).toBe(true);
+  });
+
+  it("rejects substring matches like 'wash' in 'Washington'", () => {
+    expect(isRelevantResult("Washington Post breaking news", ["wash"])).toBe(false);
+  });
+
+  it("rejects single-word match when fewer than 2 terms match", () => {
+    expect(isRelevantResult("r/laundry - laundry tips", ["wash", "apps"])).toBe(false);
+  });
+
+  it("accepts when at least 2 single-word terms match with word boundaries", () => {
+    expect(isRelevantResult("car wash mobile service", ["car", "wash", "mobile"])).toBe(true);
+  });
+
+  it("is case insensitive", () => {
+    expect(isRelevantResult("CAR WASH forum", ["car wash"])).toBe(true);
+  });
+
+  it("rejects completely irrelevant text", () => {
+    expect(isRelevantResult("FBI raids on reporters", ["car wash", "detailing"])).toBe(false);
   });
 });
 

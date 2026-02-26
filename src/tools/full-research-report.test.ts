@@ -69,19 +69,40 @@ const mockPricing: ExtractPricingOutput = {
 // ── deriveTopics ─────────────────────────────────────────────────────────────
 
 describe("deriveTopics", () => {
-  it("extracts meaningful words, skipping stop words", () => {
+  it("includes full input as the first topic", () => {
     const topics = deriveTopics("a SaaS tool for managing invoices");
-    expect(topics).toContain("saas");
-    expect(topics).toContain("tool");
-    expect(topics).toContain("managing");
-    expect(topics).toContain("invoices");
-    expect(topics).not.toContain("for");
-    expect(topics).not.toContain("a");
+    expect(topics[0]).toBe("a saas tool for managing invoices");
   });
 
-  it("deduplicates repeated words", () => {
+  it("preserves compound phrases as bigrams", () => {
+    const topics = deriveTopics("car wash booking app");
+    // "car wash" should appear as a bigram, not split into "wash" alone
+    expect(topics.some((t) => t.includes("car wash"))).toBe(true);
+    expect(topics).not.toContain("wash");
+  });
+
+  it("skips stop words in bigrams", () => {
+    const topics = deriveTopics("a SaaS tool for managing invoices");
+    // "for managing" should be skipped because "for" is a stop word
+    expect(topics).not.toContain("for managing");
+  });
+
+  it("includes individual words only when not covered by bigrams", () => {
+    // For "car wash booking app": bigrams are "car wash", "wash booking", "booking app"
+    // All individual words appear in bigrams, so none should be standalone
+    const topics = deriveTopics("car wash booking app");
+    expect(topics[0]).toBe("car wash booking app");
+    expect(topics.some((t) => t === "car wash")).toBe(true);
+    expect(topics).not.toContain("wash");
+    expect(topics).not.toContain("booking");
+  });
+
+  it("deduplicates — no standalone words already in bigrams", () => {
+    // "saas saas platform" → bigrams "saas saas", "saas platform" cover "saas" and "platform"
     const topics = deriveTopics("saas saas platform");
-    expect(topics.filter((t) => t === "saas")).toHaveLength(1);
+    expect(topics[0]).toBe("saas saas platform");
+    // "saas" should not appear as a standalone topic since bigrams cover it
+    expect(topics.filter((t) => t === "saas")).toHaveLength(0);
   });
 
   it("returns at most 5 topics", () => {
@@ -154,6 +175,35 @@ describe("generateSummary", () => {
       { data: null, error: "Timeout" }
     );
     expect(summary.failed_sections).toContain("pricing");
+  });
+
+  it("includes geography and segment labels in market size takeaway", () => {
+    const summary = generateSummary(
+      { data: mockCompetitors },
+      { data: mockMarketSize },
+      { data: mockCommunities },
+      { data: [mockPricing] },
+      { geography: "eu", target_segment: "enterprise SaaS" }
+    );
+    const marketTakeaway = summary.key_takeaways.find((t) =>
+      t.includes("Market size")
+    );
+    expect(marketTakeaway).toContain("(EU)");
+    expect(marketTakeaway).toContain("for enterprise SaaS");
+  });
+
+  it("omits geography label for global scope", () => {
+    const summary = generateSummary(
+      { data: mockCompetitors },
+      { data: mockMarketSize },
+      { data: mockCommunities },
+      { data: [mockPricing] },
+      { geography: "global" }
+    );
+    const marketTakeaway = summary.key_takeaways.find((t) =>
+      t.includes("Market size")
+    );
+    expect(marketTakeaway).not.toContain("(GLOBAL)");
   });
 
   it("mentions unknown market size when figures were unavailable", () => {
@@ -314,6 +364,89 @@ describe("fullResearchReport", () => {
     expect(() => new Date(report.generated_at)).not.toThrow();
     expect(new Date(report.generated_at).toISOString()).toBe(
       report.generated_at
+    );
+  });
+
+  it("passes geography to estimateMarketSize", async () => {
+    vi.mocked(searchCompetitors).mockResolvedValue([]);
+    vi.mocked(estimateMarketSize).mockResolvedValue(mockMarketSize);
+    vi.mocked(findCommunities).mockResolvedValue([]);
+
+    await fullResearchReport({
+      business_idea: "car wash platform",
+      geography: "us",
+    });
+
+    expect(estimateMarketSize).toHaveBeenCalledWith(
+      expect.objectContaining({ geography: "us" })
+    );
+  });
+
+  it("passes product_type to searchCompetitors", async () => {
+    vi.mocked(searchCompetitors).mockResolvedValue([]);
+    vi.mocked(estimateMarketSize).mockResolvedValue(mockMarketSize);
+    vi.mocked(findCommunities).mockResolvedValue([]);
+
+    await fullResearchReport({
+      business_idea: "car wash platform",
+      product_type: "mobile app",
+    });
+
+    expect(searchCompetitors).toHaveBeenCalledWith(
+      expect.objectContaining({ product_type: "mobile app" })
+    );
+  });
+
+  it("augments industry query with target_segment", async () => {
+    vi.mocked(searchCompetitors).mockResolvedValue([]);
+    vi.mocked(estimateMarketSize).mockResolvedValue(mockMarketSize);
+    vi.mocked(findCommunities).mockResolvedValue([]);
+
+    await fullResearchReport({
+      business_idea: "car wash apps",
+      target_segment: "B2B operator tools",
+    });
+
+    expect(searchCompetitors).toHaveBeenCalledWith(
+      expect.objectContaining({
+        industry: "car wash apps B2B operator tools",
+      })
+    );
+    // Communities should use target_segment as audience
+    expect(findCommunities).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target_audience: "B2B operator tools",
+      })
+    );
+  });
+
+  it("includes geography and segment in summary takeaways", async () => {
+    vi.mocked(searchCompetitors).mockResolvedValue([]);
+    vi.mocked(estimateMarketSize).mockResolvedValue(mockMarketSize);
+    vi.mocked(findCommunities).mockResolvedValue([]);
+
+    const report = await fullResearchReport({
+      business_idea: "car wash platform",
+      geography: "us",
+      target_segment: "B2B SaaS",
+    });
+
+    const marketTakeaway = report.summary.key_takeaways.find((t) =>
+      t.includes("Market size")
+    );
+    expect(marketTakeaway).toContain("(US)");
+    expect(marketTakeaway).toContain("for B2B SaaS");
+  });
+
+  it("defaults to global geography when not specified", async () => {
+    vi.mocked(searchCompetitors).mockResolvedValue([]);
+    vi.mocked(estimateMarketSize).mockResolvedValue(mockMarketSize);
+    vi.mocked(findCommunities).mockResolvedValue([]);
+
+    await fullResearchReport({ business_idea: "test idea" });
+
+    expect(estimateMarketSize).toHaveBeenCalledWith(
+      expect.objectContaining({ geography: "global" })
     );
   });
 });

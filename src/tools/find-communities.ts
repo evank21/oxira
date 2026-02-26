@@ -70,6 +70,36 @@ export function dedupeByUrl(communities: Community[]): Community[] {
   });
 }
 
+/**
+ * Checks whether a search result is relevant to the query topics.
+ * Uses word-boundary matching to avoid false positives like "wash" in "Washington".
+ */
+export function isRelevantResult(
+  text: string,
+  queryTerms: string[]
+): boolean {
+  const lower = text.toLowerCase();
+
+  // Multi-word terms get word-boundary matching
+  const multiWord = queryTerms.filter((t) => t.includes(" "));
+  for (const term of multiWord) {
+    const pattern = new RegExp(
+      `\\b${term.replace(/\s+/g, "\\s+")}\\b`,
+      "i"
+    );
+    if (pattern.test(lower)) return true;
+  }
+
+  // For single-word terms, require at least 2 to match (with word boundaries)
+  const singleWords = queryTerms.filter((t) => !t.includes(" "));
+  let matched = 0;
+  for (const word of singleWords) {
+    const pattern = new RegExp(`\\b${word}\\b`, "i");
+    if (pattern.test(lower)) matched++;
+  }
+  return matched >= 2;
+}
+
 export async function findCommunities(
   input: FindCommunitiesInput
 ): Promise<FindCommunitiesOutput> {
@@ -78,15 +108,22 @@ export async function findCommunities(
   const errors: string[] = [];
 
   // Search HackerNews for relevant discussions
-  const hnQueries = [target_audience, ...topics.slice(0, 2)];
+  // Use multi-word topics first; they produce more relevant HN results
+  const multiWordTopics = topics.filter((t) => t.includes(" "));
+  const hnQueries = [target_audience, ...multiWordTopics.slice(0, 2)];
 
-  for (const query of hnQueries) {
+  for (const query of hnQueries.slice(0, 3)) {
     try {
       const response = await hnAlgoliaClient.searchStories(query, 10);
 
       for (const story of response.hits.slice(0, 3)) {
-        if (story.points >= 10) {
-          // Only include stories with some engagement
+        if (
+          story.points >= 10 &&
+          isRelevantResult(
+            `${story.title} ${story.story_text || ""}`,
+            topics
+          )
+        ) {
           communities.push({
             platform: "HackerNews",
             name: story.title,
@@ -103,9 +140,14 @@ export async function findCommunities(
   }
 
   // Search for Reddit communities (Brave or Tavily fallback)
+  // Use quoted multi-word phrases to avoid partial matches (e.g. "wash" in "Washington")
+  const quoteIfMultiWord = (t: string) =>
+    t.includes(" ") ? `"${t}"` : t;
   const redditQueries = [
-    `site:reddit.com ${target_audience} community subreddit`,
-    ...topics.map((t) => `site:reddit.com r/${t}`),
+    `site:reddit.com ${quoteIfMultiWord(target_audience)} subreddit`,
+    ...multiWordTopics
+      .slice(0, 2)
+      .map((t) => `site:reddit.com subreddit ${quoteIfMultiWord(t)}`),
   ];
 
   for (const query of redditQueries.slice(0, 3)) {
@@ -113,7 +155,13 @@ export async function findCommunities(
       const results = await webSearch(query, 5);
       for (const result of results) {
         const subredditName = extractSubredditName(result.url);
-        if (subredditName) {
+        if (
+          subredditName &&
+          isRelevantResult(
+            `${subredditName} ${result.description || ""}`,
+            topics
+          )
+        ) {
           communities.push({
             platform: "Reddit",
             name: subredditName,
