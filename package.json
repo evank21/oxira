@@ -4,13 +4,24 @@
   "description": "Oxira MCP Server - Business idea evaluation for indie hackers",
   "type": "module",
   "main": "dist/index.js",
+  "bin": {
+    "oxira": "bin/oxira.js"
+  },
+  "files": [
+    "bin/",
+    "dist/",
+    "README.md",
+    "LICENSE",
+    ".env.example"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
     "start": "node dist/index.js",
     "lint": "eslint src/",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
