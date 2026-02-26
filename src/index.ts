@@ -57,7 +57,7 @@ function errorResult(message: string, details?: string) {
 // Register tools
 server.tool(
   "estimate_market_size",
-  "Estimate the Total Addressable Market (TAM) for an industry. Returns market size estimates with confidence levels and sources.",
+  "Estimate the Total Addressable Market (TAM) for an industry. Returns market size ranges with confidence levels and sources.\n\nIMPORTANT: The 'industry' parameter is used as a search query for market reports. Use established market research terminology: 'mobile car wash services market', 'project management software market'. Include 'market' or 'services' to target research reports. Be specific about the segment — 'on-demand car wash' vs 'car wash industry' returns very different numbers.",
   EstimateMarketSizeInputSchema.shape,
   async (args) => {
     try {
@@ -72,7 +72,7 @@ server.tool(
 
 server.tool(
   "search_competitors",
-  "Find competitors in a specific industry or market segment. Returns company information including URLs, descriptions, and features.",
+  "Find existing product companies in a specific industry. Returns company URLs, descriptions, and features.\n\nIMPORTANT: The 'industry' parameter is used directly as a search query. Optimize it for finding actual product/service companies, NOT articles about building them.\n- Use product/service terms: 'on-demand car wash service', 'mobile car wash booking platform'\n- AVOID generic 'app' or 'software' suffixes that attract dev agencies: 'car wash apps' → 'car wash service platform'\n- AVOID meta-terms: 'startup', 'business', 'company', 'competitors'\n- Be specific about the product category, not the business model",
   SearchCompetitorsInputSchema.shape,
   async (args) => {
     try {
@@ -87,7 +87,7 @@ server.tool(
 
 server.tool(
   "find_communities",
-  "Find online communities where a target audience gathers. Searches HackerNews, Reddit, Discord, and forums.",
+  "Find online communities (Reddit, HackerNews, Discord, forums) where a target audience gathers.\n\nIMPORTANT: Both parameters are used as search queries.\n- target_audience should describe PEOPLE, not a product: 'car wash business owners' not 'car wash apps'\n- topics must be specific compound phrases, not single words: ['car wash business', 'auto detailing'] NOT ['wash', 'car']. Single generic words match unrelated communities.",
   FindCommunitiesInputSchema.shape,
   async (args) => {
     try {
@@ -102,7 +102,7 @@ server.tool(
 
 server.tool(
   "extract_pricing",
-  "Fetch a competitor's pricing page and convert to markdown. Returns the content for LLM analysis.",
+  "Fetch a competitor's pricing page and extract pricing data. Returns structured tiers and raw markdown.\n\nIMPORTANT: Provide the most specific pricing URL possible. Best: direct /pricing page. OK: company homepage. Bad: blog post or review site (returns article content, not pricing).",
   ExtractPricingInputSchema.shape,
   async (args) => {
     try {
@@ -117,7 +117,7 @@ server.tool(
 
 server.tool(
   "full_research_report",
-  "Run a full market research report for a business idea. Combines competitor search, market size estimation, community discovery, and pricing extraction into a single structured report.",
+  "Run a comprehensive market research report combining competitor search, market sizing, community discovery, and pricing extraction.\n\nIMPORTANT: 'business_idea' drives all sub-queries. Write it as a clear, specific product description, NOT a casual pitch.\n- Good: 'On-demand mobile car wash booking platform connecting consumers with local detailers for doorstep cleaning'\n- Bad: 'car wash app' (too vague, returns dev agencies and generic results)\n- Include: what the product does, who it's for, and the product category",
   FullResearchReportInputSchema.shape,
   async (args) => {
     try {
