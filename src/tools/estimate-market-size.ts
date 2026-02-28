@@ -51,6 +51,24 @@ export function extractDollarFigures(text: string): number[] {
   return figures;
 }
 
+/**
+ * Removes statistical outliers from a sorted array of market size figures.
+ * Any value more than 10x above or below the median is considered an outlier
+ * (e.g. a $590B figure alongside $3-20B figures for the same industry).
+ * Returns the original array unchanged if it has fewer than 3 values.
+ */
+export function filterOutliers(values: number[]): number[] {
+  if (values.length < 3) return values;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  const median = sorted.length % 2 !== 0
+    ? sorted[mid]
+    : (sorted[mid - 1] + sorted[mid]) / 2;
+  const filtered = sorted.filter(v => v >= median / 10 && v <= median * 10);
+  // Keep at least 2 values so callers always have a range
+  return filtered.length >= 2 ? filtered : sorted.slice(0, 2);
+}
+
 export function extractGrowthRate(text: string): string | undefined {
   // Look for CAGR or growth rate patterns
   const patterns = [
@@ -234,17 +252,23 @@ export async function estimateMarketSize(
     };
   }
 
-  // Separate by scope
-  const narrowFigures = scopedFigures
-    .filter((f) => f.scope === "narrow")
-    .map((f) => f.value)
-    .sort((a, b) => a - b);
-  const broadFigures = scopedFigures
-    .filter((f) => f.scope === "broad")
-    .map((f) => f.value)
-    .sort((a, b) => a - b);
+  // Separate by scope, filtering outliers within each group
+  const narrowFigures = filterOutliers(
+    scopedFigures
+      .filter((f) => f.scope === "narrow")
+      .map((f) => f.value)
+      .sort((a, b) => a - b)
+  );
+  const broadFigures = filterOutliers(
+    scopedFigures
+      .filter((f) => f.scope === "broad")
+      .map((f) => f.value)
+      .sort((a, b) => a - b)
+  );
 
-  const allValues = scopedFigures.map((f) => f.value).sort((a, b) => a - b);
+  const allValues = filterOutliers(
+    scopedFigures.map((f) => f.value).sort((a, b) => a - b)
+  );
 
   // Prefer narrow figures for top-level estimate; fall back to broad, then all
   const primaryFigures =
