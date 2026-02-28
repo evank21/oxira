@@ -405,23 +405,34 @@ export function normalizeProductUrl(url: string): string {
   }
 }
 
-function extractCompanyName(url: string, title: string): string {
-  // Try to get name from domain
-  const domain = extractDomain(url);
-  const domainParts = domain.split(".");
-  if (domainParts.length > 0) {
-    const name = domainParts[0];
-    // Capitalize first letter
-    return name.charAt(0).toUpperCase() + name.slice(1);
-  }
+// Generic page titles that should not be used as company names
+const GENERIC_TITLE_WORDS = new Set([
+  "home", "pricing", "plans", "features", "product", "products",
+  "welcome", "about", "contact", "overview", "solutions", "services",
+  "page", "index", "default",
+]);
 
-  // Fall back to title
+export function extractCompanyName(url: string, title: string): string {
+  // Try title first: split on common separators and take the first fragment
   const titleParts = title.split(/[|\-–—:]/);
   if (titleParts.length > 0) {
-    return titleParts[0].trim();
+    const candidate = titleParts[0].trim();
+    // Accept if it's a plausible company name: 2–40 chars, not a generic word
+    if (
+      candidate.length >= 2 &&
+      candidate.length <= 40 &&
+      !GENERIC_TITLE_WORDS.has(candidate.toLowerCase())
+    ) {
+      return candidate;
+    }
   }
 
-  return title;
+  // Fall back to domain: use the second-to-last label (e.g. "adobe" from business.adobe.com)
+  const domain = extractDomain(url); // e.g. "business.adobe.com" or "zoho.com"
+  const labels = domain.split(".");
+  // For "zoho.com" → labels[-2] = "zoho"; for "business.adobe.com" → labels[-2] = "adobe"
+  const namePart = labels.length >= 2 ? labels[labels.length - 2] : labels[0];
+  return namePart.charAt(0).toUpperCase() + namePart.slice(1);
 }
 
 const SCORE_THRESHOLD = 30;

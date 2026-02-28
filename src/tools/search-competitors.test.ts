@@ -10,6 +10,7 @@ import {
   looksLikeProductDomain,
   isProductUrl,
   extractG2Products,
+  extractCompanyName,
 } from "./search-competitors.js";
 
 describe("extractDomain", () => {
@@ -596,5 +597,55 @@ describe("extractG2Products", () => {
     const markdown = `[Acme - Project Management](https://acme.com)`;
     const products = extractG2Products(markdown);
     expect(products[0].name).toBe("Acme");
+  });
+});
+
+describe("extractCompanyName", () => {
+  it("uses the title's first fragment as the company name", () => {
+    expect(
+      extractCompanyName("https://zoho.com/projects", "Zoho Projects - Project Management Software")
+    ).toBe("Zoho Projects");
+  });
+
+  it("uses the title when domain label would be uninformative (subdomain like 'business')", () => {
+    expect(
+      extractCompanyName(
+        "https://business.adobe.com/products/workfront.html",
+        "Adobe Workfront | Best Project Management Software"
+      )
+    ).toBe("Adobe Workfront");
+  });
+
+  it("falls back to TLD-1 domain label when title fragment is generic", () => {
+    // Title starts with "Home" — a generic word
+    expect(
+      extractCompanyName("https://cbinsights.com/research/report", "Home | CB Insights")
+    ).toBe("Cbinsights");
+  });
+
+  it("uses TLD-1 label for subdomain URLs when title is not available", () => {
+    // "business" is generic, so fall back to domain; TLD-1 = "adobe"
+    expect(
+      extractCompanyName("https://business.adobe.com/", "Home")
+    ).toBe("Adobe");
+  });
+
+  it("uses title fragment over domain when title is clearly a brand name", () => {
+    expect(
+      extractCompanyName("https://app.asana.com/", "Asana: Manage your team's work, projects, & tasks online")
+    ).toBe("Asana");
+  });
+
+  it("falls back to domain label when title fragment is too long (> 40 chars)", () => {
+    const longTitle = "A".repeat(41) + " | Some Product";
+    expect(
+      extractCompanyName("https://acme.com/", longTitle)
+    ).toBe("Acme");
+  });
+
+  it("falls back to domain when title fragment is too short (< 2 chars)", () => {
+    expect(
+      extractCompanyName("https://openproject.org/", "X | Open Source PM")
+    ).toBe("Openproject");
   });
 });
