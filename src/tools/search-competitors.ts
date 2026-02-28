@@ -513,7 +513,7 @@ export async function searchCompetitors(
   const { industry, product_type, max_results = 5 } = input;
 
   const queries = buildSearchQueries(industry, product_type);
-  const countPerQuery = max_results + 10;
+  const countPerQuery = 20;
 
   // Run Brave/Tavily queries and G2 mining in parallel
   const [searchResult, g2Products] = await Promise.allSettled([
@@ -563,10 +563,8 @@ export async function searchCompetitors(
     return true;
   });
 
-  // Score and filter results, then sort by score descending
-  // G2-sourced results get a curated-source bonus
-  // Domains appearing in multiple sources get a multi-source bonus
-  const scoredResults = uniqueResults
+  // Score all results; G2-sourced and multi-source domains get bonuses
+  const allScored = uniqueResults
     .map((r) => {
       const domain = extractDomain(r.url);
       const sources = domainSources.get(domain);
@@ -574,8 +572,19 @@ export async function searchCompetitors(
       const multiSourceBonus = sources && sources.size > 1 ? 20 : 0;
       return { result: r, score: scoreResult(r) + g2Bonus + multiSourceBonus };
     })
-    .filter((s) => s.score >= SCORE_THRESHOLD)
     .sort((a, b) => b.score - a.score);
+
+  // Filter above threshold; backfill with lower-scoring results if needed
+  const aboveThreshold = allScored.filter((s) => s.score >= SCORE_THRESHOLD);
+  const scoredResults =
+    aboveThreshold.length >= max_results
+      ? aboveThreshold
+      : [
+          ...aboveThreshold,
+          ...allScored
+            .filter((s) => s.score > 0 && s.score < SCORE_THRESHOLD)
+            .slice(0, max_results - aboveThreshold.length),
+        ];
 
   // Normalize URLs: redirect product domains from blog/resources pages to root
   const normalizedResults = scoredResults.map((s) => ({
