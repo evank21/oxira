@@ -601,61 +601,60 @@ export async function searchCompetitors(
     return true;
   });
 
-  // Fetch and validate top candidates (fetch more than needed to allow for post-fetch filtering)
-  const fetchLimit = Math.min(dedupedResults.length, max_results + 3);
-  const competitors: Competitor[] = [];
-
-  for (const { result } of dedupedResults.slice(0, fetchLimit)) {
-    if (competitors.length >= max_results) break;
-
-    try {
-      const fetchResult = await fetchAsMarkdown(result.url);
-
-      // Post-fetch validation: demote non-product pages
-      if (!isProductPage(fetchResult.markdown)) {
-        continue;
-      }
-
-      competitors.push({
+  // Helper: build a Competitor from a scored result and an optional fetch outcome
+  function toCompetitor(
+    result: SearchResult,
+    fetchOutcome: PromiseSettledResult<{ markdown: string }> | undefined
+  ): Competitor {
+    if (fetchOutcome?.status === "fulfilled") {
+      return {
         name: extractCompanyName(result.url, result.title),
         url: result.url,
         description: result.description,
-        tagline: extractTagline(fetchResult.markdown),
-        features: extractFeatures(fetchResult.markdown),
-      });
-    } catch {
-      // If fetch fails, still include basic info (search score was good)
-      competitors.push({
-        name: extractCompanyName(result.url, result.title),
-        url: result.url,
-        description: result.description,
-      });
+        tagline: extractTagline(fetchOutcome.value.markdown),
+        features: extractFeatures(fetchOutcome.value.markdown),
+      };
     }
+    return {
+      name: extractCompanyName(result.url, result.title),
+      url: result.url,
+      description: result.description,
+    };
   }
 
-  // If post-fetch filtering was too aggressive, backfill from remaining scored results
-  if (competitors.length < max_results) {
-    for (const { result } of dedupedResults.slice(fetchLimit)) {
-      if (competitors.length >= max_results) break;
-      const domain = extractDomain(result.url);
-      if (competitors.some((c) => extractDomain(c.url) === domain)) continue;
+  // Fetch the top candidates in parallel, then pick those that pass isProductPage
+  const firstBatch = dedupedResults.slice(0, Math.min(dedupedResults.length, max_results + 5));
+  const firstFetches = await Promise.allSettled(
+    firstBatch.map(({ result }) => fetchAsMarkdown(result.url))
+  );
 
-      try {
-        const fetchResult = await fetchAsMarkdown(result.url);
-        competitors.push({
-          name: extractCompanyName(result.url, result.title),
-          url: result.url,
-          description: result.description,
-          tagline: extractTagline(fetchResult.markdown),
-          features: extractFeatures(fetchResult.markdown),
-        });
-      } catch {
-        competitors.push({
-          name: extractCompanyName(result.url, result.title),
-          url: result.url,
-          description: result.description,
-        });
-      }
+  const competitors: Competitor[] = [];
+  for (let i = 0; i < firstBatch.length; i++) {
+    if (competitors.length >= max_results) break;
+    const { result } = firstBatch[i];
+    const outcome = firstFetches[i];
+
+    if (outcome.status === "fulfilled" && !isProductPage(outcome.value.markdown)) {
+      continue; // post-fetch validation failed — skip
+    }
+    competitors.push(toCompetitor(result, outcome));
+  }
+
+  // If still short, fetch the next batch in parallel and backfill
+  if (competitors.length < max_results) {
+    const seenDomains = new Set(competitors.map((c) => extractDomain(c.url)));
+    const secondBatch = dedupedResults
+      .slice(firstBatch.length)
+      .filter(({ result }) => !seenDomains.has(extractDomain(result.url)))
+      .slice(0, max_results - competitors.length + 2);
+
+    const secondFetches = await Promise.allSettled(
+      secondBatch.map(({ result }) => fetchAsMarkdown(result.url))
+    );
+
+    for (let i = 0; i < secondBatch.length; i++) {
+      if (competitors.length >= max_results) break;
+      competitors.push(toCompetitor(secondBatch[i].result, secondFetches[i]));
     }
   }
 
