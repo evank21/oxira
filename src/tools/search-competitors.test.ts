@@ -167,6 +167,16 @@ describe("scoreResult", () => {
         scoreResult(result("https://sourceforge.net/software/foo"))
       ).toBe(0);
     });
+
+    it("filters SaaS listing directories", () => {
+      expect(scoreResult(result("https://saasworthy.com/product/foo"))).toBe(0);
+      expect(scoreResult(result("https://crozdesk.com/software/foo"))).toBe(0);
+      expect(scoreResult(result("https://getapp.com/project-management-software"))).toBe(0);
+      expect(scoreResult(result("https://softwareadvice.com/project-management/"))).toBe(0);
+      expect(scoreResult(result("https://producthunt.com/posts/foo"))).toBe(0);
+      expect(scoreResult(result("https://alternativeto.net/software/foo"))).toBe(0);
+      expect(scoreResult(result("https://slashdot.org/software/foo"))).toBe(0);
+    });
   });
 
   describe("penalizes content paths", () => {
