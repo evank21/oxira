@@ -72,6 +72,98 @@ interface SearchResult {
   title: string;
   url: string;
   description: string;
+  source?: "search" | "g2";
+}
+
+interface G2Product {
+  name: string;
+  url: string;
+  description?: string;
+}
+
+const G2_SKIP_DOMAINS = new Set([
+  "facebook.com",
+  "twitter.com",
+  "linkedin.com",
+  "youtube.com",
+  "github.com",
+  "instagram.com",
+  "tiktok.com",
+  "pinterest.com",
+  "g2.com",
+  "www.g2.com",
+]);
+
+export function isProductUrl(url: string): boolean {
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    if (G2_SKIP_DOMAINS.has(hostname)) return false;
+    if (G2_SKIP_DOMAINS.has(hostname.replace(/^www\./, ""))) return false;
+    // Skip CDN/asset domains
+    if (/^(cdn|assets|fonts|analytics|static|media)\./i.test(hostname)) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function extractG2Products(markdown: string): G2Product[] {
+  const products: G2Product[] = [];
+  const seenDomains = new Set<string>();
+
+  // Match markdown links: [Link Text](https://example.com/...)
+  const urlRegex = /\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g;
+  let match;
+  while ((match = urlRegex.exec(markdown)) !== null) {
+    const [, linkText, url] = match;
+    if (!isProductUrl(url)) continue;
+
+    try {
+      const origin = new URL(url).origin;
+      const domain = extractDomain(origin);
+      if (seenDomains.has(domain)) continue;
+      seenDomains.add(domain);
+
+      const name = linkText
+        .replace(/\s*[-|–—:].*/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (name.length < 2 || name.length > 60) continue;
+
+      products.push({ name, url: origin });
+    } catch {
+      // skip malformed URLs
+    }
+  }
+
+  return products;
+}
+
+async function mineG2Category(
+  industry: string,
+  searchFn: (query: string, count: number) => Promise<SearchResult[]>
+): Promise<G2Product[]> {
+  try {
+    const g2Query = `site:g2.com/categories ${industry} software`;
+    const g2Results = await searchFn(g2Query, 3);
+
+    // Find a G2 category page (not a product/compare/reviews page)
+    const categoryUrl = g2Results.find(
+      (r) =>
+        r.url.includes("g2.com/categories/") &&
+        !r.url.includes("/compare") &&
+        !r.url.includes("/reviews")
+    )?.url;
+
+    if (!categoryUrl) return [];
+
+    const { markdown } = await fetchAsMarkdown(categoryUrl);
+    if (!markdown || markdown.length < 100) return [];
+
+    return extractG2Products(markdown);
+  } catch {
+    return [];
+  }
 }
 
 const CONTENT_DOMAINS = new Set([
@@ -346,55 +438,70 @@ export function buildSearchQueries(
   ];
 }
 
+async function searchOne(
+  query: string,
+  count: number
+): Promise<SearchResult[]> {
+  const braveClient = getBraveSearchClient();
+  const tavilyClient = getTavilyClient();
+
+  if (braveClient) {
+    try {
+      const response = await braveClient.search(query, count);
+      return response.results.map((r) => ({
+        title: r.title,
+        url: r.url,
+        description: r.description,
+        source: "search" as const,
+      }));
+    } catch (error) {
+      console.error(`Brave Search failed for "${query}":`, error);
+    }
+  }
+
+  if (tavilyClient) {
+    try {
+      const response = await tavilyClient.search(query, count);
+      return response.results.map((r) => ({
+        title: r.title,
+        url: r.url,
+        description: r.content,
+        source: "search" as const,
+      }));
+    } catch (error) {
+      console.error(`Tavily Search failed for "${query}":`, error);
+    }
+  }
+
+  return [];
+}
+
 async function runSearch(
   queries: string[],
   countPerQuery: number
 ): Promise<{ results: SearchResult[]; error?: string }> {
   const braveClient = getBraveSearchClient();
   const tavilyClient = getTavilyClient();
-  let searchError: string | undefined;
-  const allResults: SearchResult[] = [];
 
-  for (const query of queries) {
-    if (braveClient) {
-      try {
-        const response = await braveClient.search(query, countPerQuery);
-        allResults.push(
-          ...response.results.map((r) => ({
-            title: r.title,
-            url: r.url,
-            description: r.description,
-          }))
-        );
-        continue; // got results for this query, move to next
-      } catch (error) {
-        console.error("Brave Search failed:", error);
-        searchError = classifySearchError(error);
-      }
-    }
-
-    // Fallback to Tavily for this query
-    if (tavilyClient) {
-      try {
-        const response = await tavilyClient.search(query, countPerQuery);
-        allResults.push(
-          ...response.results.map((r) => ({
-            title: r.title,
-            url: r.url,
-            description: r.content,
-          }))
-        );
-      } catch (error) {
-        console.error("Tavily Search failed:", error);
-        searchError = classifySearchError(error);
-      }
-    }
-  }
-
-  if (allResults.length === 0 && !braveClient && !tavilyClient) {
+  if (!braveClient && !tavilyClient) {
     throw new Error(
       "No search provider configured. Set BRAVE_SEARCH_API_KEY or TAVILY_API_KEY."
     );
+  }
+
+  const settled = await Promise.allSettled(
+    queries.map((q) => searchOne(q, countPerQuery))
+  );
+
+  const allResults: SearchResult[] = [];
+  let searchError: string | undefined;
+
+  for (const result of settled) {
+    if (result.status === "fulfilled") {
+      allResults.push(...result.value);
+    } else {
+      searchError = classifySearchError(result.reason);
+    }
   }
 
   return { results: allResults, error: searchError };
@@ -406,23 +513,50 @@ export async function searchCompetitors(
   const { industry, product_type, max_results = 5 } = input;
 
   const queries = buildSearchQueries(industry, product_type);
-  const countPerQuery = max_results + 5;
+  const countPerQuery = max_results + 10;
 
-  const { results: searchResults, error: searchError } = await runSearch(
-    queries,
-    countPerQuery
-  );
+  // Run Brave/Tavily queries and G2 mining in parallel
+  const [searchResult, g2Products] = await Promise.allSettled([
+    runSearch(queries, countPerQuery),
+    mineG2Category(industry, searchOne),
+  ]);
 
-  if (searchResults.length === 0) {
+  const { results: searchResults, error: searchError } =
+    searchResult.status === "fulfilled"
+      ? searchResult.value
+      : { results: [] as SearchResult[], error: "Search failed" };
+
+  // Convert G2 products to SearchResults
+  const g2Results: SearchResult[] =
+    g2Products.status === "fulfilled"
+      ? g2Products.value.map((p) => ({
+          title: p.name,
+          url: p.url,
+          description: p.description || "",
+          source: "g2" as const,
+        }))
+      : [];
+
+  const allResults = [...searchResults, ...g2Results];
+
+  if (allResults.length === 0) {
     if (searchError) {
       throw new Error(`Search failed: ${searchError}`);
     }
     throw new Error("Search returned no results.");
   }
 
-  // Dedupe by domain
+  // Dedupe by domain, tracking which domains appeared in multiple sources
+  const domainSources = new Map<string, Set<string>>();
+  for (const r of allResults) {
+    const domain = extractDomain(r.url);
+    const sources = domainSources.get(domain) || new Set();
+    sources.add(r.source || "search");
+    domainSources.set(domain, sources);
+  }
+
   const seenDomains = new Set<string>();
-  const uniqueResults = searchResults.filter((r) => {
+  const uniqueResults = allResults.filter((r) => {
     const domain = extractDomain(r.url);
     if (seenDomains.has(domain)) return false;
     seenDomains.add(domain);
@@ -430,8 +564,16 @@ export async function searchCompetitors(
   });
 
   // Score and filter results, then sort by score descending
+  // G2-sourced results get a curated-source bonus
+  // Domains appearing in multiple sources get a multi-source bonus
   const scoredResults = uniqueResults
-    .map((r) => ({ result: r, score: scoreResult(r) }))
+    .map((r) => {
+      const domain = extractDomain(r.url);
+      const sources = domainSources.get(domain);
+      const g2Bonus = r.source === "g2" ? 15 : 0;
+      const multiSourceBonus = sources && sources.size > 1 ? 20 : 0;
+      return { result: r, score: scoreResult(r) + g2Bonus + multiSourceBonus };
+    })
     .filter((s) => s.score >= SCORE_THRESHOLD)
     .sort((a, b) => b.score - a.score);
 

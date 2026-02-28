@@ -8,6 +8,8 @@ import {
   buildSearchQueries,
   normalizeProductUrl,
   looksLikeProductDomain,
+  isProductUrl,
+  extractG2Products,
 } from "./search-competitors.js";
 
 describe("extractDomain", () => {
@@ -498,5 +500,101 @@ describe("normalizeProductUrl", () => {
 
   it("returns invalid URLs unchanged", () => {
     expect(normalizeProductUrl("not-a-url")).toBe("not-a-url");
+  });
+});
+
+describe("isProductUrl", () => {
+  it("accepts product URLs", () => {
+    expect(isProductUrl("https://washos.com/")).toBe(true);
+    expect(isProductUrl("https://acme.io/pricing")).toBe(true);
+  });
+
+  it("rejects social media URLs", () => {
+    expect(isProductUrl("https://facebook.com/acme")).toBe(false);
+    expect(isProductUrl("https://twitter.com/acme")).toBe(false);
+    expect(isProductUrl("https://linkedin.com/company/acme")).toBe(false);
+    expect(isProductUrl("https://youtube.com/watch?v=123")).toBe(false);
+  });
+
+  it("rejects g2.com URLs", () => {
+    expect(isProductUrl("https://g2.com/products/acme")).toBe(false);
+    expect(isProductUrl("https://www.g2.com/categories/foo")).toBe(false);
+  });
+
+  it("rejects CDN/asset domains", () => {
+    expect(isProductUrl("https://cdn.example.com/image.png")).toBe(false);
+    expect(isProductUrl("https://assets.company.com/logo.svg")).toBe(false);
+    expect(isProductUrl("https://static.example.com/file.js")).toBe(false);
+  });
+
+  it("rejects invalid URLs gracefully", () => {
+    expect(isProductUrl("not-a-url")).toBe(false);
+  });
+});
+
+describe("extractG2Products", () => {
+  it("extracts product URLs from markdown links", () => {
+    const markdown = `
+## Top Products
+
+[Washos](https://washos.com/visit) - On-demand car wash
+[Spiffy](https://getspiffy.com/info) - Mobile car care
+[MobileWash](https://mobilewash.com/) - Car wash app
+    `;
+    const products = extractG2Products(markdown);
+    expect(products).toHaveLength(3);
+    expect(products[0].name).toBe("Washos");
+    expect(products[0].url).toBe("https://washos.com");
+    expect(products[1].name).toBe("Spiffy");
+    expect(products[1].url).toBe("https://getspiffy.com");
+  });
+
+  it("filters out social media and g2 links", () => {
+    const markdown = `
+[Acme](https://acme.com) - Product
+[Facebook Page](https://facebook.com/acme) - Social
+[G2 Reviews](https://g2.com/products/acme/reviews) - Review
+[Twitter](https://twitter.com/acme) - Social
+    `;
+    const products = extractG2Products(markdown);
+    expect(products).toHaveLength(1);
+    expect(products[0].name).toBe("Acme");
+  });
+
+  it("deduplicates by domain", () => {
+    const markdown = `
+[Acme Home](https://acme.com/)
+[Acme Pricing](https://acme.com/pricing)
+[Acme Blog](https://acme.com/blog/post)
+    `;
+    const products = extractG2Products(markdown);
+    expect(products).toHaveLength(1);
+  });
+
+  it("normalizes URLs to origin", () => {
+    const markdown = `[Acme](https://www.acme.com/some/deep/path?utm=123)`;
+    const products = extractG2Products(markdown);
+    expect(products[0].url).toBe("https://www.acme.com");
+  });
+
+  it("filters out very short or long link text", () => {
+    const markdown = `
+[A](https://short.com)
+[${"x".repeat(61)}](https://toolong.com)
+[Good Name](https://good.com)
+    `;
+    const products = extractG2Products(markdown);
+    expect(products).toHaveLength(1);
+    expect(products[0].name).toBe("Good Name");
+  });
+
+  it("returns empty array for markdown with no links", () => {
+    expect(extractG2Products("Just plain text, no links here.")).toEqual([]);
+  });
+
+  it("strips trailing separators from link text", () => {
+    const markdown = `[Acme - Project Management](https://acme.com)`;
+    const products = extractG2Products(markdown);
+    expect(products[0].name).toBe("Acme");
   });
 });
