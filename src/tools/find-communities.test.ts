@@ -49,6 +49,44 @@ describe("isRelevantResult", () => {
   it("rejects completely irrelevant text", () => {
     expect(isRelevantResult("FBI raids on reporters", ["car wash", "detailing"])).toBe(false);
   });
+
+  describe("Discord-specific relevance cases", () => {
+    it("accepts a Discord server whose title matches a multi-word topic", () => {
+      expect(
+        isRelevantResult(
+          "Car Wash Business Owners Discord Server - A hangout for car wash operators",
+          ["car wash business", "auto detailing"]
+        )
+      ).toBe(true);
+    });
+
+    it("rejects a Discord server that is a car enthusiast community, not car wash business", () => {
+      expect(
+        isRelevantResult(
+          "CarTalkUK Discord Server - A community for UK car enthusiasts and gamers",
+          ["car wash business", "auto detailing"]
+        )
+      ).toBe(false);
+    });
+
+    it("rejects a generic automotive Discord when topics are business-specific", () => {
+      expect(
+        isRelevantResult(
+          "Automotive Affinity - A hangout for car enthusiasts and gamers",
+          ["car wash business", "auto detailing"]
+        )
+      ).toBe(false);
+    });
+
+    it("accepts a detailing Discord when phrase matches a topic exactly", () => {
+      expect(
+        isRelevantResult(
+          "Auto Detailing Pros Discord Server - A Discord for auto detailing professionals",
+          ["car wash business", "auto detailing"]
+        )
+      ).toBe(true);
+    });
+  });
 });
 
 describe("dedupeByUrl", () => {
