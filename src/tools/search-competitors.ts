@@ -192,6 +192,18 @@ const CONTENT_DOMAINS = new Set([
   "clutch.co",
   "goodfirms.co",
   "sourceforge.net",
+  // SaaS listing/review directories — not actual product competitors
+  "saasworthy.com",
+  "crozdesk.com",
+  "getapp.com",
+  "softwareadvice.com",
+  "producthunt.com",
+  "alternativeto.net",
+  "slashdot.org",
+  "financesonline.com",
+  "softwaresuggest.com",
+  "serchen.com",
+  "appvizer.com",
 ]);
 
 const CONTENT_PATH_PATTERNS = [
