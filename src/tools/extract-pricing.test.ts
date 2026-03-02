@@ -182,6 +182,97 @@ describe("extractStructuredPricing", () => {
   });
 });
 
+describe("extractStructuredPricing — proximity-based extraction", () => {
+  it("extracts tiers from a flat card layout with no headings", () => {
+    const markdown = [
+      "Free",
+      "$0 / month",
+      "- Up to 5 users",
+      "- Basic features",
+      "",
+      "Pro",
+      "$24 / month",
+      "- Unlimited users",
+      "- Advanced features",
+      "",
+      "Enterprise",
+      "Contact sales",
+      "- Custom limits",
+      "- SSO",
+    ].join("\n");
+
+    const result = extractStructuredPricing(markdown);
+
+    expect(result.tiers).toHaveLength(3);
+    expect(result.tiers[0].name).toBe("Free");
+    expect(result.tiers[0].price).toMatch(/\$0/);
+    expect(result.tiers[1].name).toBe("Pro");
+    expect(result.tiers[1].price).toMatch(/\$24/);
+    expect(result.tiers[2].name).toBe("Enterprise");
+    expect(result.tiers[2].price).toBe("Custom");
+    expect(result.has_free_tier).toBe(true);
+    expect(result.has_enterprise).toBe(true);
+  });
+
+  it("extracts all tiers from a mixed heading + flat layout", () => {
+    const markdown = [
+      "## Starter",
+      "$10 / month",
+      "- Basic features",
+      "",
+      "Pro",
+      "$30 / month",
+      "- Advanced features",
+    ].join("\n");
+
+    const result = extractStructuredPricing(markdown);
+
+    expect(result.tiers).toHaveLength(2);
+    expect(result.tiers[0].name).toBe("Starter");
+    expect(result.tiers[0].price).toMatch(/\$10/);
+    expect(result.tiers[1].name).toBe("Pro");
+    expect(result.tiers[1].price).toMatch(/\$30/);
+  });
+
+  it("does not extract FAQ questions as pricing tiers", () => {
+    const markdown = [
+      "Pro",
+      "$49 / month",
+      "- Feature A",
+      "- Feature B",
+      "",
+      "FAQ",
+      "Is Pro right for me?",
+      "The Pro plan includes unlimited repos.",
+    ].join("\n");
+
+    const result = extractStructuredPricing(markdown);
+
+    expect(result.tiers).toHaveLength(1);
+    expect(result.tiers[0].name).toBe("Pro");
+  });
+
+  it("deduplicates tiers when the same name appears multiple times", () => {
+    const markdown = [
+      "Pro",
+      "$49/month",
+      "- Feature A",
+      "",
+      "Pro",
+      "(mentioned again)",
+      "",
+      "Pro",
+      "(third time)",
+    ].join("\n");
+
+    const result = extractStructuredPricing(markdown);
+    const proTiers = result.tiers.filter((t) => t.name === "Pro");
+
+    expect(proTiers).toHaveLength(1);
+    expect(result.tiers).toHaveLength(1);
+  });
+});
+
 describe("truncateMarkdown", () => {
   it("returns content unchanged when under the limit", () => {
     const short = "hello world";
