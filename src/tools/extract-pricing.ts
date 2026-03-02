@@ -21,7 +21,7 @@ const PRICE_PATTERN =
   /\$[\d,]+(?:\.\d{1,2})?(?:\s*\/\s*(?:mo(?:nth)?|yr|year|annual(?:ly)?|user[\s/]*mo(?:nth)?|seat[\s/]*mo(?:nth)?))?/i;
 
 const CUSTOM_PATTERN =
-  /\b(?:custom|contact\s+(?:us|sales)|get\s+a\s+quote|book\s+a\s+demo|request\s+pricing)\b/i;
+  /\b(?:custom|contact\s+(?:us|sales)|get\s+a\s+quote|book\s+a\s+demo|request\s+pricing|talk\s+to\s+(?:us|sales)|let['']s\s+talk)\b/i;
 
 function extractBillingPeriod(priceStr: string): string | undefined {
   if (/\/\s*(?:yr|year|annual)/i.test(priceStr)) return "annual";
@@ -82,28 +82,29 @@ export function extractStructuredPricing(markdown: string): StructuredPricing {
     let price: string | undefined;
     let billing_period: string | undefined;
 
-    // Prefer forward signals; only fall back to backward if forward has nothing
+    // Prefer forward signals; only fall back to backward if forward has nothing.
+    // Check CUSTOM_PATTERN before free/\$0 so "Talk to us" beats a later "free trial" mention.
     const fwdPriceMatch = forwardText.match(PRICE_PATTERN);
     if (fwdPriceMatch) {
       price = fwdPriceMatch[0].trim();
       billing_period = extractBillingPeriod(price);
-    } else if (/\bfree\b|\$0\b/i.test(forwardText)) {
-      price = "Free";
-      billing_period = "free";
     } else if (CUSTOM_PATTERN.test(forwardText)) {
       price = "Custom";
       billing_period = "custom";
+    } else if (/\bfree\b|\$0\b/i.test(forwardText)) {
+      price = "Free";
+      billing_period = "free";
     } else {
       const bwdPriceMatch = backwardText.match(PRICE_PATTERN);
       if (bwdPriceMatch) {
         price = bwdPriceMatch[0].trim();
         billing_period = extractBillingPeriod(price);
-      } else if (/\bfree\b|\$0\b/i.test(backwardText)) {
-        price = "Free";
-        billing_period = "free";
       } else if (CUSTOM_PATTERN.test(backwardText)) {
         price = "Custom";
         billing_period = "custom";
+      } else if (/\bfree\b|\$0\b/i.test(backwardText)) {
+        price = "Free";
+        billing_period = "free";
       }
     }
 
