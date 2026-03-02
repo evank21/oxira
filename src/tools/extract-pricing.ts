@@ -9,6 +9,14 @@ import type {
 const TIER_NAMES =
   /(?:free|basic|starter|hobby|pro|professional|team|business|enterprise|plus|premium|growth|scale|unlimited|standard|essential|advanced|lite)/i;
 
+// Full-line match for proximity anchor detection — must be essentially just the tier name
+const TIER_NAME_FULL =
+  /^(?:free|basic|starter|hobby|pro|professional|team|business|enterprise|plus|premium|growth|scale|unlimited|standard|essential|advanced|lite)(?:\s+(?:plan|tier|edition|package))?\s*$/i;
+
+// Verb patterns that indicate the line is prose, not a tier name
+const PROSE_VERBS =
+  /\b(?:includes?|provides?|allows?|offers?|gives?|enables?|supports?|features?)\b/i;
+
 const PRICE_PATTERN =
   /\$[\d,]+(?:\.\d{1,2})?(?:\s*\/\s*(?:mo(?:nth)?|yr|year|annual(?:ly)?|user[\s/]*mo(?:nth)?|seat[\s/]*mo(?:nth)?))?/i;
 
@@ -46,63 +54,135 @@ function detectPricingModel(markdown: string): string | undefined {
 
 export function extractStructuredPricing(markdown: string): StructuredPricing {
   const tiers: PricingTier[] = [];
+  const seenNames = new Set<string>();
+  const lines = markdown.split("\n");
 
-  // Split by headings that look like tier names
-  const tierPattern = /^#{1,3}\s+(.+)|^\*\*(.+?)\*\*/gm;
-  const sections: { name: string; content: string; start: number }[] = [];
+  // --- Proximity-based scan ---
+  // Find anchor lines (lines that look like tier names) and build each tier
+  // from a ±8 line window around the anchor.
+  for (let i = 0; i < lines.length; i++) {
+    const cleaned = lines[i]
+      .replace(/^#+\s*/, "")
+      .replace(/\*+/g, "")
+      .trim();
 
-  let match: RegExpExecArray | null;
-  while ((match = tierPattern.exec(markdown)) !== null) {
-    const rawName = (match[1] || match[2]).trim();
-    sections.push({ name: rawName, content: "", start: match.index + match[0].length });
-  }
+    if (!cleaned || cleaned.length >= 60) continue;
+    if (!TIER_NAME_FULL.test(cleaned)) continue;
+    if (PROSE_VERBS.test(cleaned)) continue;
 
-  // Fill in content between sections
-  for (let i = 0; i < sections.length; i++) {
-    const end = i + 1 < sections.length ? sections[i + 1].start - (sections[i + 1].name.length + 4) : markdown.length;
-    sections[i].content = markdown.slice(sections[i].start, end);
-  }
+    const normalizedName = cleaned.replace(/\s*plan\b/i, "").trim().toLowerCase();
+    if (seenNames.has(normalizedName)) continue;
 
-  // Extract tiers from sections that look pricing-related
-  for (const section of sections) {
-    const nameAndContent = `${section.name} ${section.content}`;
-    const hasTierName = TIER_NAMES.test(section.name);
-    const hasPrice = PRICE_PATTERN.test(nameAndContent);
-    const hasCustom = CUSTOM_PATTERN.test(nameAndContent);
+    // Search forward first (card layout: price is below the name), then backward
+    const forwardLines = lines.slice(i + 1, Math.min(lines.length, i + 9));
+    const backwardLines = lines.slice(Math.max(0, i - 8), i);
+    const forwardText = forwardLines.join("\n");
+    const backwardText = backwardLines.join("\n");
 
-    if (!hasTierName && !hasPrice && !hasCustom) continue;
+    let price: string | undefined;
+    let billing_period: string | undefined;
 
-    const tier: PricingTier = {
-      name: section.name.replace(/\s*plan\b/i, "").trim(),
-    };
-
-    const priceMatch = nameAndContent.match(PRICE_PATTERN);
-    if (priceMatch) {
-      tier.price = priceMatch[0].trim();
-      tier.billing_period = extractBillingPeriod(tier.price);
-    } else if (/free|\$0\b/i.test(nameAndContent)) {
-      tier.price = "Free";
-      tier.billing_period = "free";
-    } else if (hasCustom) {
-      tier.price = "Custom";
-      tier.billing_period = "custom";
+    // Prefer forward signals; only fall back to backward if forward has nothing
+    const fwdPriceMatch = forwardText.match(PRICE_PATTERN);
+    if (fwdPriceMatch) {
+      price = fwdPriceMatch[0].trim();
+      billing_period = extractBillingPeriod(price);
+    } else if (/\bfree\b|\$0\b/i.test(forwardText)) {
+      price = "Free";
+      billing_period = "free";
+    } else if (CUSTOM_PATTERN.test(forwardText)) {
+      price = "Custom";
+      billing_period = "custom";
+    } else {
+      const bwdPriceMatch = backwardText.match(PRICE_PATTERN);
+      if (bwdPriceMatch) {
+        price = bwdPriceMatch[0].trim();
+        billing_period = extractBillingPeriod(price);
+      } else if (/\bfree\b|\$0\b/i.test(backwardText)) {
+        price = "Free";
+        billing_period = "free";
+      } else if (CUSTOM_PATTERN.test(backwardText)) {
+        price = "Custom";
+        billing_period = "custom";
+      }
     }
 
-    const features = extractTierFeatures(section.content);
-    if (features.length > 0) tier.features = features;
+    // Require a price signal — no price means this isn't a pricing tier
+    if (price === undefined) continue;
 
+    // Collect features from forward lines only, stopping at a blank line or next anchor
+    const featureLines: string[] = [];
+    for (const fl of forwardLines) {
+      const fc = fl.replace(/^#+\s*/, "").replace(/\*+/g, "").trim();
+      if (fc === "") break;
+      if (TIER_NAME_FULL.test(fc) && !PROSE_VERBS.test(fc)) break;
+      featureLines.push(fl);
+    }
+    const features = extractTierFeatures(featureLines.join("\n"));
+
+    seenNames.add(normalizedName);
+    const tier: PricingTier = { name: cleaned.replace(/\s*plan\b/i, "").trim() };
+    tier.price = price;
+    if (billing_period !== undefined) tier.billing_period = billing_period;
+    if (features.length > 0) tier.features = features;
     tiers.push(tier);
   }
 
-  // Fallback: no tier headings found, scan entire markdown for a price
+  // --- Fallback: heading-based approach when proximity scan finds nothing ---
   if (tiers.length === 0) {
-    const priceMatch = markdown.match(PRICE_PATTERN);
-    if (priceMatch) {
-      tiers.push({
-        name: "Default",
-        price: priceMatch[0].trim(),
-        billing_period: extractBillingPeriod(priceMatch[0]),
-      });
+    const tierPattern = /^#{1,3}\s+(.+)|^\*\*(.+?)\*\*/gm;
+    const sections: { name: string; content: string; start: number }[] = [];
+
+    let match: RegExpExecArray | null;
+    while ((match = tierPattern.exec(markdown)) !== null) {
+      const rawName = (match[1] || match[2]).trim();
+      sections.push({ name: rawName, content: "", start: match.index + match[0].length });
+    }
+
+    for (let i = 0; i < sections.length; i++) {
+      const end = i + 1 < sections.length
+        ? sections[i + 1].start - (sections[i + 1].name.length + 4)
+        : markdown.length;
+      sections[i].content = markdown.slice(sections[i].start, end);
+    }
+
+    for (const section of sections) {
+      const nameAndContent = `${section.name} ${section.content}`;
+      const hasTierName = TIER_NAMES.test(section.name);
+      const hasPrice = PRICE_PATTERN.test(nameAndContent);
+      const hasCustom = CUSTOM_PATTERN.test(nameAndContent);
+
+      if (!hasTierName && !hasPrice && !hasCustom) continue;
+
+      const tier: PricingTier = { name: section.name.replace(/\s*plan\b/i, "").trim() };
+
+      const priceMatch = nameAndContent.match(PRICE_PATTERN);
+      if (priceMatch) {
+        tier.price = priceMatch[0].trim();
+        tier.billing_period = extractBillingPeriod(tier.price);
+      } else if (/free|\$0\b/i.test(nameAndContent)) {
+        tier.price = "Free";
+        tier.billing_period = "free";
+      } else if (hasCustom) {
+        tier.price = "Custom";
+        tier.billing_period = "custom";
+      }
+
+      const features = extractTierFeatures(section.content);
+      if (features.length > 0) tier.features = features;
+      tiers.push(tier);
+    }
+
+    // Final fallback: no headings at all — grab first price from anywhere
+    if (tiers.length === 0) {
+      const priceMatch = markdown.match(PRICE_PATTERN);
+      if (priceMatch) {
+        tiers.push({
+          name: "Default",
+          price: priceMatch[0].trim(),
+          billing_period: extractBillingPeriod(priceMatch[0]),
+        });
+      }
     }
   }
 
@@ -114,9 +194,7 @@ export function extractStructuredPricing(markdown: string): StructuredPricing {
         /^free$/i.test(t.price || "") ||
         /^\$0\b/.test(t.price || "")
     ),
-    has_enterprise: tiers.some(
-      (t) => /enterprise/i.test(t.name)
-    ),
+    has_enterprise: tiers.some((t) => /enterprise/i.test(t.name)),
     pricing_model: detectPricingModel(markdown),
     currency: PRICE_PATTERN.test(markdown) ? "USD" : undefined,
   };
