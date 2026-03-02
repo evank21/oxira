@@ -78,7 +78,6 @@ export function extractStructuredPricing(markdown: string): StructuredPricing {
     const backwardLines = lines.slice(Math.max(0, i - 8), i);
     const forwardText = forwardLines.join("\n");
     const backwardText = backwardLines.join("\n");
-    const searchText = forwardText + "\n" + backwardText;
 
     let price: string | undefined;
     let billing_period: string | undefined;
