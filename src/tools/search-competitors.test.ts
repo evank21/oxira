@@ -10,6 +10,8 @@ import {
   looksLikeProductDomain,
   isProductUrl,
   extractG2Products,
+  extractG2ProductNames,
+  resolveG2ProductUrls,
   extractCompanyName,
 } from "./search-competitors.js";
 
@@ -607,6 +609,118 @@ describe("extractG2Products", () => {
     const markdown = `[Acme - Project Management](https://acme.com)`;
     const products = extractG2Products(markdown);
     expect(products[0].name).toBe("Acme");
+  });
+});
+
+describe("extractG2ProductNames", () => {
+  it("extracts names from internal /products/ links", () => {
+    const markdown = `
+[CodeRabbit](/products/coderabbit/info)
+[Foo Bar](/products/foo-bar/pricing)
+[GitHub Copilot](/products/github-copilot/reviews)
+    `;
+    const names = extractG2ProductNames(markdown);
+    expect(names).toContain("CodeRabbit");
+    expect(names).toContain("Foo Bar");
+    expect(names).toContain("GitHub Copilot");
+  });
+
+  it("ignores external https:// links", () => {
+    const markdown = `
+[Acme](https://acme.com/pricing)
+[Real Product](/products/real-product/info)
+    `;
+    const names = extractG2ProductNames(markdown);
+    expect(names).not.toContain("Acme");
+    expect(names).toContain("Real Product");
+  });
+
+  it("deduplicates names", () => {
+    const markdown = `
+[CodeRabbit](/products/coderabbit/info)
+[CodeRabbit](/products/coderabbit/pricing)
+[CodeRabbit](/products/coderabbit/reviews)
+    `;
+    const names = extractG2ProductNames(markdown);
+    expect(names).toHaveLength(1);
+    expect(names[0]).toBe("CodeRabbit");
+  });
+
+  it("skips names shorter than 2 chars", () => {
+    const markdown = `
+[A](/products/a/info)
+[Valid Name](/products/valid-name/info)
+    `;
+    const names = extractG2ProductNames(markdown);
+    expect(names).not.toContain("A");
+    expect(names).toContain("Valid Name");
+  });
+
+  it("skips names longer than 60 chars", () => {
+    const longName = "x".repeat(61);
+    const markdown = `
+[${longName}](/products/long/info)
+[Short Name](/products/short/info)
+    `;
+    const names = extractG2ProductNames(markdown);
+    expect(names).not.toContain(longName);
+    expect(names).toContain("Short Name");
+  });
+
+  it("returns at most 10 names", () => {
+    const lines = Array.from(
+      { length: 15 },
+      (_, i) => `[Product ${i + 1}](/products/product-${i + 1}/info)`
+    ).join("\n");
+    expect(extractG2ProductNames(lines)).toHaveLength(10);
+  });
+
+  it("strips trailing separators from link text", () => {
+    const markdown = `[CodeRabbit - AI Code Review](/products/coderabbit/info)`;
+    const names = extractG2ProductNames(markdown);
+    expect(names[0]).toBe("CodeRabbit");
+  });
+
+  it("returns empty array when no /products/ links exist", () => {
+    const markdown = `[Acme](https://acme.com) some plain text`;
+    expect(extractG2ProductNames(markdown)).toEqual([]);
+  });
+});
+
+describe("resolveG2ProductUrls", () => {
+  it("returns a G2Product when searchFn returns a valid non-g2 result", async () => {
+    const mockSearch = async (_query: string, _count: number) => [
+      { title: "CodeRabbit", url: "https://coderabbit.ai/", description: "AI code review" },
+    ];
+    const products = await resolveG2ProductUrls(["CodeRabbit"], mockSearch);
+    expect(products).toHaveLength(1);
+    expect(products[0].name).toBe("CodeRabbit");
+    expect(products[0].url).toBe("https://coderabbit.ai/");
+  });
+
+  it("skips g2.com results and returns empty when no valid URL is found", async () => {
+    const mockSearch = async (_query: string, _count: number) => [
+      { title: "CodeRabbit on G2", url: "https://g2.com/products/coderabbit", description: "reviews" },
+    ];
+    const products = await resolveG2ProductUrls(["CodeRabbit"], mockSearch);
+    expect(products).toHaveLength(0);
+  });
+
+  it("handles searchFn failures gracefully without throwing", async () => {
+    const mockSearch = async (_query: string, _count: number) => {
+      throw new Error("Search failed");
+    };
+    await expect(resolveG2ProductUrls(["CodeRabbit"], mockSearch)).resolves.toEqual([]);
+  });
+
+  it("resolves multiple names in parallel and limits to 5", async () => {
+    const mockSearch = async (query: string, _count: number) => {
+      const name = query.split(" ")[0].toLowerCase();
+      return [{ title: name, url: `https://${name}.com/`, description: "software" }];
+    };
+    const names = ["Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta"];
+    const products = await resolveG2ProductUrls(names, mockSearch);
+    expect(products).toHaveLength(5);
   });
 });
 
