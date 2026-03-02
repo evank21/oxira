@@ -107,6 +107,54 @@ export function isProductUrl(url: string): boolean {
   }
 }
 
+export function extractG2ProductNames(markdown: string): string[] {
+  const names: string[] = [];
+  const seen = new Set<string>();
+
+  // Match markdown links with G2 internal /products/ paths: [Name](/products/slug/...)
+  const regex = /\[([^\]]+)\]\(\/products\/[^)]+\)/g;
+  let match;
+  while ((match = regex.exec(markdown)) !== null) {
+    const [, linkText] = match;
+    const name = linkText
+      .replace(/\s*[-|–—:].*/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (name.length < 2 || name.length > 60) continue;
+    if (seen.has(name)) continue;
+    seen.add(name);
+    names.push(name);
+    if (names.length >= 10) break;
+  }
+
+  return names;
+}
+
+export async function resolveG2ProductUrls(
+  names: string[],
+  searchFn: (query: string, count: number) => Promise<SearchResult[]>
+): Promise<G2Product[]> {
+  const toResolve = names.slice(0, 5);
+
+  const settled = await Promise.allSettled(
+    toResolve.map(async (name) => {
+      const results = await searchFn(`${name} software official site`, 5);
+      const match = results.find((r) => isProductUrl(r.url));
+      if (!match) return null;
+      return { name, url: match.url } as G2Product;
+    })
+  );
+
+  const products: G2Product[] = [];
+  for (const result of settled) {
+    if (result.status === "fulfilled" && result.value) {
+      products.push(result.value);
+    }
+  }
+
+  return products;
+}
+
 export function extractG2Products(markdown: string): G2Product[] {
   const products: G2Product[] = [];
   const seenDomains = new Set<string>();
@@ -160,7 +208,10 @@ async function mineG2Category(
     const { markdown } = await fetchAsMarkdown(categoryUrl);
     if (!markdown || markdown.length < 100) return [];
 
-    return extractG2Products(markdown);
+    const names = extractG2ProductNames(markdown);
+    if (names.length === 0) return [];
+
+    return resolveG2ProductUrls(names, searchFn);
   } catch {
     return [];
   }
