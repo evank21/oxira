@@ -368,6 +368,34 @@ describe("scoreResult", () => {
   });
 });
 
+describe("blocklist additions — should score 0", () => {
+  const result = (url: string) => ({ url, title: "Some Title", description: "Some description" });
+
+  it("filters cbinsights.com", () => {
+    expect(scoreResult(result("https://www.cbinsights.com/company/sure/alternatives-competitors"))).toBe(0);
+  });
+
+  it("filters elearningindustry.com", () => {
+    expect(scoreResult(result("https://elearningindustry.com/directory/software-categories/onboarding-software"))).toBe(0);
+  });
+
+  it("filters cnbc.com", () => {
+    expect(scoreResult(result("https://www.cnbc.com/2026/02/25/doordash-resy-opentable-restaurant-reservation-wars.html"))).toBe(0);
+  });
+
+  it("penalizes IBM /think/ path below unpenalized baseline", () => {
+    const penalized = scoreResult(result("https://www.ibm.com/think/insights/ai-code-review"));
+    const baseline = scoreResult(result("https://www.ibm.com/products/software"));
+    expect(penalized).toBeLessThan(baseline);
+  });
+
+  it("penalizes Nationwide /managing-your- path below unpenalized baseline", () => {
+    const penalized = scoreResult(result("https://agentblog.nationwide.com/managing-your-business-and-clients/technology/benefits"));
+    const baseline = scoreResult(result("https://agentblog.nationwide.com/"));
+    expect(penalized).toBeLessThan(baseline);
+  });
+});
+
 describe("isProductPage", () => {
   it("returns true for pages with signup CTA and pricing", () => {
     const md =

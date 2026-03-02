@@ -255,6 +255,24 @@ const CONTENT_DOMAINS = new Set([
   "softwaresuggest.com",
   "serchen.com",
   "appvizer.com",
+  // Business/analyst content sites
+  "cbinsights.com",
+  "businessinsider.com",
+  "wsj.com",
+  "bloomberg.com",
+  "inc.com",
+  "entrepreneur.com",
+  "hbr.org",
+  // eLearning/software directory sites
+  "elearningindustry.com",
+  "technologyadvice.com",
+  "predictiveanalyticstoday.com",
+  // News sites
+  "cnbc.com",
+  "reuters.com",
+  "techradar.com",
+  "zdnet.com",
+  "venturebeat.com",
 ]);
 
 const CONTENT_PATH_PATTERNS = [
@@ -271,6 +289,9 @@ const CONTENT_PATH_PATTERNS = [
   /\/resources\//i,
   /\/guide\//i,
   /\/faq\//i,
+  /\/think\//i,
+  /\/insights\//i,
+  /\/managing-your-/i,
 ];
 
 const LISTICLE_TITLE_PATTERNS = [
