@@ -181,8 +181,12 @@ export async function findCommunities(
     const discordResults = await webSearch(discordQuery, 5);
     for (const result of discordResults) {
       if (
-        result.url.includes("discord.gg") ||
-        result.url.includes("discord.com/invite")
+        (result.url.includes("discord.gg") ||
+          result.url.includes("discord.com/invite")) &&
+        isRelevantResult(
+          `${result.title} ${result.description || ""}`,
+          topics
+        )
       ) {
         communities.push({
           platform: "Discord",
