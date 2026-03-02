@@ -6,10 +6,11 @@ Works with any MCP-compatible client (Claude Desktop, Claude Code, Cursor, Cline
 
 ## Features
 
+- **full_research_report** — Run a complete market research report: competitors, market size, communities, and pricing in one call
 - **estimate_market_size** — Estimate Total Addressable Market (TAM) for an industry with confidence levels and sources
 - **search_competitors** — Find competitors with descriptions, taglines, and features
 - **find_communities** — Discover HackerNews, Reddit, Discord, and forum communities
-- **extract_pricing** — Fetch pricing pages as markdown for LLM analysis
+- **extract_pricing** — Fetch and parse competitor pricing pages into structured tiers
 
 ## Prerequisites
 
@@ -30,7 +31,7 @@ No installation required. Add Oxira directly to your MCP client config and it wi
   "mcpServers": {
     "oxira": {
       "command": "npx",
-      "args": ["-y", "oxira"],
+      "args": ["-y", "oxira-mcp"],
       "env": {
         "BRAVE_SEARCH_API_KEY": "your_key_here",
         "TAVILY_API_KEY": "optional_fallback_key"
